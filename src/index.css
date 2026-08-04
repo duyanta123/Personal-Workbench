@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --color-page: #f4f3f0;
+  --color-card: #fcfbf8;
+  --color-nested: #f7f6f1;
+  --color-ink: #232220;
+  --color-ink-2: #6b665d;
+  --color-ink-3: #8c877c;
+  --color-accent: #2f2e2b;
+  --color-accent-2: #efeee8;
+  --color-m1: #8aa394;
+  --color-m2: #7a8da3;
+  --color-m3: #c4a572;
+  --color-m4: #b8837a;
+  --color-m5: #a09ab5;
+  --color-danger: #c0564f;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 4px 14px rgba(0, 0, 0, 0.05);
+  --shadow-overlay: 0 12px 40px rgba(0, 0, 0, 0.18);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+  }
+  body {
+    background: var(--color-page);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* 简易滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+}
