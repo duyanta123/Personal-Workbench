@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   BookOpen,
-  Compass,
   Flame,
   Home,
   ListTodo,
@@ -19,11 +18,14 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { useOnline } from '../hooks/useOnline'
 import { isSupabaseConfigured, supabase } from '../lib/supabase'
+import { useAvatars, useDeleteAvatar, useSetActiveAvatar, useUploadAvatar } from '../hooks/useAvatars'
+import { avatarUrl } from '../utils/avatar'
 import { useUiStore } from '../stores/ui'
 import { THEME_KEY_SIDEBAR } from '../stores/theme'
 import { cn } from '../lib/cn'
 import ThemeToggle from './ui/ThemeToggle'
 import IconButton from './ui/IconButton'
+import AvatarPicker from './ui/AvatarPicker'
 
 interface NavItem {
   to: string
@@ -50,6 +52,20 @@ export default function Layout() {
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen)
   const location = useLocation()
   const currentTitle = NAV.find((n) => n.to === location.pathname)?.label ?? '个人工作台'
+
+  const { data: avatarRows } = useAvatars()
+  const uploadAvatar = useUploadAvatar()
+  const setActiveAvatar = useSetActiveAvatar()
+  const deleteAvatar = useDeleteAvatar()
+
+  const baseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
+  const activePath = avatarRows?.find((a) => a.is_active)?.storage_path ?? null
+  const currentSrc = activePath && baseUrl ? avatarUrl(activePath, baseUrl) : null
+  const avatarItems = (avatarRows ?? []).map((a) => ({
+    id: a.id,
+    src: baseUrl ? avatarUrl(a.storage_path, baseUrl) : '',
+    isActive: a.is_active
+  }))
 
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -84,9 +100,13 @@ export default function Layout() {
   function renderLogo() {
     return (
       <div className="flex items-center gap-2.5">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-white">
-          <Compass size={18} />
-        </div>
+        <AvatarPicker
+          currentSrc={currentSrc}
+          avatars={avatarItems}
+          onUpload={(f) => uploadAvatar.mutate(f)}
+          onSelect={(id) => setActiveAvatar.mutate(id)}
+          onDelete={(id) => deleteAvatar.mutate(id)}
+        />
         {!collapsed && (
           <div className="min-w-0">
             <div className="truncate text-sm font-bold text-ink">个人工作台</div>
@@ -192,9 +212,13 @@ export default function Layout() {
           <Menu size={20} />
         </IconButton>
         <div className="text-sm font-semibold text-ink">{currentTitle}</div>
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-white">
-          <Compass size={16} />
-        </div>
+        <AvatarPicker
+          currentSrc={currentSrc}
+          avatars={avatarItems}
+          onUpload={(f) => uploadAvatar.mutate(f)}
+          onSelect={(id) => setActiveAvatar.mutate(id)}
+          onDelete={(id) => deleteAvatar.mutate(id)}
+        />
       </header>
 
       {/* 移动端抽屉 */}
@@ -204,9 +228,13 @@ export default function Layout() {
           <div className="absolute inset-y-0 left-0 flex w-64 flex-col bg-surface p-4 text-ink">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-white">
-                  <Compass size={16} />
-                </div>
+                <AvatarPicker
+                  currentSrc={currentSrc}
+                  avatars={avatarItems}
+                  onUpload={(f) => uploadAvatar.mutate(f)}
+                  onSelect={(id) => setActiveAvatar.mutate(id)}
+                  onDelete={(id) => deleteAvatar.mutate(id)}
+                />
                 <span className="text-sm font-bold">个人工作台</span>
               </div>
               <IconButton onClick={() => setDrawerOpen(false)} aria-label="关闭菜单">

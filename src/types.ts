@@ -60,3 +60,11 @@ export interface Note {
   created_at: string
   updated_at: string
 }
+
+export interface UserAvatar {
+  id: string
+  user_id: string
+  storage_path: string
+  is_active: boolean
+  created_at: string
+}
