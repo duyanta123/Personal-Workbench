@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   BookOpen,
+  Database,
   Flame,
   Home,
   ListTodo,
@@ -9,6 +10,7 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
+  Search,
   Target,
   TriangleAlert,
   Wallet,
@@ -26,6 +28,9 @@ import { cn } from '../lib/cn'
 import ThemeToggle from './ui/ThemeToggle'
 import IconButton from './ui/IconButton'
 import AvatarPicker from './ui/AvatarPicker'
+import ToastHost from './ui/ToastHost'
+import GlobalSearch from './ui/GlobalSearch'
+import DataManager from './ui/DataManager'
 
 interface NavItem {
   to: string
@@ -52,6 +57,8 @@ export default function Layout() {
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen)
   const location = useLocation()
   const currentTitle = NAV.find((n) => n.to === location.pathname)?.label ?? '个人工作台'
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [dataOpen, setDataOpen] = useState(false)
 
   const { data: avatarRows } = useAvatars()
   const uploadAvatar = useUploadAvatar()
@@ -180,18 +187,42 @@ export default function Layout() {
           )}
         >
           {!collapsed && (
-            <button
-              onClick={logout}
-              className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
-            >
-              <LogOut size={20} className="shrink-0" />
-              退出登录
-            </button>
+            <>
+              <button
+                onClick={() => setSearchOpen(true)}
+                className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+              >
+                <Search size={20} className="shrink-0" />
+                搜索
+              </button>
+              <button
+                onClick={() => setDataOpen(true)}
+                className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+              >
+                <Database size={20} className="shrink-0" />
+                数据备份
+              </button>
+              <button
+                onClick={logout}
+                className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+              >
+                <LogOut size={20} className="shrink-0" />
+                退出登录
+              </button>
+            </>
           )}
           {collapsed && (
-            <IconButton onClick={logout} aria-label="退出登录" title="退出登录">
-              <LogOut size={20} />
-            </IconButton>
+            <>
+              <IconButton onClick={() => setSearchOpen(true)} aria-label="搜索" title="搜索">
+                <Search size={20} />
+              </IconButton>
+              <IconButton onClick={() => setDataOpen(true)} aria-label="数据备份" title="数据备份">
+                <Database size={20} />
+              </IconButton>
+              <IconButton onClick={logout} aria-label="退出登录" title="退出登录">
+                <LogOut size={20} />
+              </IconButton>
+            </>
           )}
           <div className={cn('flex items-center', collapsed ? '' : 'justify-between')}>
             <ThemeToggle />
@@ -212,13 +243,18 @@ export default function Layout() {
           <Menu size={20} />
         </IconButton>
         <div className="text-sm font-semibold text-ink">{currentTitle}</div>
-        <AvatarPicker
-          currentSrc={currentSrc}
-          avatars={avatarItems}
-          onUpload={(f) => uploadAvatar.mutate(f)}
-          onSelect={(id) => setActiveAvatar.mutate(id)}
-          onDelete={(id) => deleteAvatar.mutate(id)}
-        />
+        <div className="flex items-center gap-1">
+          <IconButton onClick={() => setSearchOpen(true)} aria-label="搜索">
+            <Search size={20} />
+          </IconButton>
+          <AvatarPicker
+            currentSrc={currentSrc}
+            avatars={avatarItems}
+            onUpload={(f) => uploadAvatar.mutate(f)}
+            onSelect={(id) => setActiveAvatar.mutate(id)}
+            onDelete={(id) => deleteAvatar.mutate(id)}
+          />
+        </div>
       </header>
 
       {/* 移动端抽屉 */}
@@ -272,8 +308,28 @@ export default function Layout() {
               ))}
             </nav>
             <button
+              onClick={() => {
+                setDrawerOpen(false)
+                setSearchOpen(true)
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+            >
+              <Search size={20} className="shrink-0" />
+              搜索
+            </button>
+            <button
+              onClick={() => {
+                setDrawerOpen(false)
+                setDataOpen(true)
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+            >
+              <Database size={20} className="shrink-0" />
+              数据备份
+            </button>
+            <button
               onClick={logout}
-              className="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
             >
               <LogOut size={20} className="shrink-0" />
               退出登录
@@ -313,6 +369,11 @@ export default function Layout() {
           </NavLink>
         ))}
       </nav>
+
+      {/* 全局浮层 */}
+      <ToastHost />
+      <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <DataManager open={dataOpen} onClose={() => setDataOpen(false)} />
     </div>
   )
 }

@@ -23,8 +23,12 @@ export function useNotes() {
 export function useAddNote() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { title: string | null; body: string; tags: string[] }) => {
-      const { data, error } = await supabase!.from('notes').insert(input).select().single()
+    mutationFn: async (input: { title: string | null; body: string; tags: string[]; pinned?: boolean }) => {
+      const { data, error } = await supabase!
+        .from('notes')
+        .insert({ ...input, pinned: input.pinned ?? false })
+        .select()
+        .single()
       if (error) throw error
       return data as Note
     },
@@ -37,6 +41,18 @@ export function useUpdateNote() {
   return useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: { title: string | null; body: string; tags: string[] } }) => {
       const { error } = await supabase!.from('notes').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: notesKey })
+  })
+}
+
+/** 切换置顶 */
+export function useTogglePin() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, pinned }: { id: string; pinned: boolean }) => {
+      const { error } = await supabase!.from('notes').update({ pinned }).eq('id', id)
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: notesKey })

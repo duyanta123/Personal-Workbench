@@ -59,16 +59,16 @@ export function useDeleteHabit() {
   })
 }
 
-export function useToggleHabitLog() {
+/** 指定日期打卡/取消打卡（补卡也走这里） */
+export function useToggleHabitLogDate() {
   const qc = useQueryClient()
-  const today = todayStr()
   return useMutation({
-    mutationFn: async (habitId: string) => {
+    mutationFn: async ({ habitId, date }: { habitId: string; date: string }) => {
       const { data: existing } = await supabase!
         .from('habit_logs')
         .select('id')
         .eq('habit_id', habitId)
-        .eq('log_date', today)
+        .eq('log_date', date)
         .maybeSingle()
       if (existing) {
         const { error } = await supabase!.from('habit_logs').delete().eq('id', existing.id)
@@ -76,10 +76,19 @@ export function useToggleHabitLog() {
       } else {
         const { error } = await supabase!
           .from('habit_logs')
-          .insert({ habit_id: habitId, log_date: today })
+          .insert({ habit_id: habitId, log_date: date })
         if (error) throw error
       }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: habitLogsKey })
   })
+}
+
+export function useToggleHabitLog() {
+  const today = todayStr()
+  const toggle = useToggleHabitLogDate()
+  return {
+    ...toggle,
+    mutate: (habitId: string) => toggle.mutate({ habitId, date: today })
+  }
 }

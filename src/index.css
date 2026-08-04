@@ -121,3 +121,61 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* ============================================================
+   动效
+   ============================================================ */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pop-in {
+  0% {
+    transform: scale(0.5);
+  }
+  60% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* 完成勾选弹出动画 */
+.check-pop {
+  animation: pop-in 0.25s ease-out;
+}
+
+/* 进度条满格脉冲 */
+@keyframes pulse-bar {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--m1) 40%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--m1) 0%, transparent);
+  }
+}
+.progress-done {
+  animation: pulse-bar 1.2s ease-out 2;
+}
+
+/* 日历单元格通用点击态 */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.fade-in {
+  animation: fade-in 0.15s ease-out;
+}

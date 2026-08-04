@@ -7,6 +7,7 @@ export interface Todo {
   level: Priority
   done: boolean
   sort_order: number
+  due_date: string | null
   created_at: string
   updated_at: string
 }
@@ -57,7 +58,15 @@ export interface Note {
   title: string | null
   body: string
   tags: string[]
+  pinned: boolean
   created_at: string
+  updated_at: string
+}
+
+export interface UserPreferences {
+  user_id: string
+  categories: { expense: string[]; income: string[] }
+  monthly_budget: number | null
   updated_at: string
 }
 

@@ -20,19 +20,33 @@ export function useLedgerEntries() {
   })
 }
 
+export interface NewLedgerEntry {
+  kind: LedgerEntry['kind']
+  category: string
+  amount: number
+  note: string | null
+  entry_date: string
+}
+
 export function useAddLedgerEntry() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: {
-      kind: LedgerEntry['kind']
-      category: string
-      amount: number
-      note: string | null
-      entry_date: string
-    }) => {
+    mutationFn: async (input: NewLedgerEntry) => {
       const { data, error } = await supabase!.from('ledger_entries').insert(input).select().single()
       if (error) throw error
       return data as LedgerEntry
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ledgerKey })
+  })
+}
+
+/** 编辑账单 */
+export function useUpdateLedgerEntry() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<NewLedgerEntry> }) => {
+      const { error } = await supabase!.from('ledger_entries').update(patch).eq('id', id)
+      if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ledgerKey })
   })

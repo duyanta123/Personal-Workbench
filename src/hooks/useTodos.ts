@@ -19,13 +19,19 @@ export function useTodos() {
   })
 }
 
+export interface NewTodo {
+  text: string
+  level: Priority
+  due_date?: string | null
+}
+
 export function useAddTodo() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { text: string; level: Priority }) => {
+    mutationFn: async (input: NewTodo) => {
       const { data, error } = await supabase!
         .from('todos')
-        .insert({ ...input, sort_order: Date.now() })
+        .insert({ ...input, due_date: input.due_date ?? null, sort_order: Date.now() })
         .select()
         .single()
       if (error) throw error
@@ -52,6 +58,30 @@ export function useToggleTodo() {
       if (ctx?.prev) qc.setQueryData(todosKey, ctx.prev)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: todosKey })
+  })
+}
+
+/** 编辑待办（文本 / 优先级 / 日期 / 完成态） */
+export function useUpdateTodo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Pick<Todo, 'text' | 'level' | 'done' | 'due_date'>> }) => {
+      const { error } = await supabase!.from('todos').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: todosKey })
+  })
+}
+
+/** 批量重排：按传入顺序重写 sort_order */
+export function useReorderTodos() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (rows: { id: string; user_id: string; sort_order: number }[]) => {
+      const { error } = await supabase!.from('todos').upsert(rows, { onConflict: 'id' })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: todosKey })
   })
 }
 

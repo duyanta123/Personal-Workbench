@@ -2,7 +2,11 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Check, Plus, Target, Trash2 } from 'lucide-react'
 import { useAddGoal, useDeleteGoal, useGoals, useIncrementGoal } from '../hooks/useGoals'
+import { useDeferredDelete } from '../hooks/useDeferredDelete'
+import { useTouch } from '../hooks/useTouch'
+import { useToastStore } from '../stores/toast'
 import { resolveIcon } from '../utils/icon'
+import type { Goal } from '../types'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import Progress from '../components/ui/Progress'
@@ -18,21 +22,41 @@ export default function Goals() {
   const addGoal = useAddGoal()
   const incrementGoal = useIncrementGoal()
   const deleteGoal = useDeleteGoal()
+  const push = useToastStore((s) => s.push)
+  const touch = useTouch()
 
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('target')
   const [target, setTarget] = useState('')
   const [unit, setUnit] = useState('')
 
+  const { requestDelete } = useDeferredDelete<Goal>({
+    key: ['goals'],
+    label: (g) => g.name,
+    remove: (id) => deleteGoal.mutate(id),
+    restore: (g) =>
+      addGoal.mutate({ name: g.name, emoji: g.emoji, current: g.current, target: g.target, unit: g.unit })
+  })
+
   function handleAdd(e: FormEvent) {
     e.preventDefault()
     const t = Number(target)
     if (!name.trim() || !t || t <= 0) return
     addGoal.mutate({ name: name.trim(), emoji: icon || 'target', current: 0, target: t, unit: unit.trim() || null })
+    push({ kind: 'success', message: `已创建目标「${name.trim()}」` })
     setName('')
     setIcon('target')
     setTarget('')
     setUnit('')
+  }
+
+  function increment(g: Goal) {
+    if (g.current >= g.target) return
+    incrementGoal.mutate(g.id)
+    const next = g.current + 1
+    if (next >= g.target) {
+      push({ kind: 'success', message: `目标「${g.name}」达成` })
+    }
   }
 
   return (
@@ -133,7 +157,7 @@ export default function Goals() {
                     <Button
                       size="sm"
                       variant="secondary"
-                      onClick={() => incrementGoal.mutate(g.id)}
+                      onClick={() => increment(g)}
                       disabled={done}
                       aria-label="加一"
                       className="!px-2"
@@ -142,8 +166,9 @@ export default function Goals() {
                     </Button>
                     <IconButton
                       size="sm"
-                      onClick={() => deleteGoal.mutate(g.id)}
+                      onClick={() => requestDelete(g)}
                       aria-label="删除目标"
+                      className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}
                     >
                       <Trash2 size={16} />
                     </IconButton>
