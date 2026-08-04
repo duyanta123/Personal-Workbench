@@ -10,6 +10,7 @@ const todo = (id: string, text: string, done: boolean, updated_at: string): Todo
   done,
   sort_order: 0,
   due_date: null,
+  pinned: false,
   created_at: updated_at,
   updated_at
 })
@@ -33,7 +34,14 @@ const entry = (id: string, kind: LedgerEntry['kind'], amount: number, created_at
   created_at
 })
 
-const habit = (id: string, name: string): Habit => ({ id, user_id: 'u1', name, emoji: 'flame', created_at: '' })
+const habit = (id: string, name: string): Habit => ({
+  id,
+  user_id: 'u1',
+  name,
+  emoji: 'flame',
+  pinned: false,
+  created_at: ''
+})
 
 describe('aggregateTimeline', () => {
   it('只收录已完成待办', () => {

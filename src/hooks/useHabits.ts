@@ -92,3 +92,15 @@ export function useToggleHabitLog() {
     mutate: (habitId: string) => toggle.mutate({ habitId, date: today })
   }
 }
+
+/** 切换置顶 */
+export function useToggleHabitPin() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, pinned }: { id: string; pinned: boolean }) => {
+      const { error } = await supabase!.from('habits').update({ pinned }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: habitsKey })
+  })
+}

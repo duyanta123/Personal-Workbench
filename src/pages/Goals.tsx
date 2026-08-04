@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { Check, Plus, Target, Trash2 } from 'lucide-react'
-import { useAddGoal, useDeleteGoal, useGoals, useIncrementGoal } from '../hooks/useGoals'
+import { Check, Pin, PinOff, Plus, Target, Trash2 } from 'lucide-react'
+import { useAddGoal, useDeleteGoal, useGoals, useIncrementGoal, useToggleGoalPin } from '../hooks/useGoals'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
@@ -22,6 +22,7 @@ export default function Goals() {
   const addGoal = useAddGoal()
   const incrementGoal = useIncrementGoal()
   const deleteGoal = useDeleteGoal()
+  const togglePin = useToggleGoalPin()
   const push = useToastStore((s) => s.push)
   const touch = useTouch()
 
@@ -164,6 +165,17 @@ export default function Goals() {
                     >
                       <Plus size={14} />
                     </Button>
+                    <IconButton
+                      size="sm"
+                      onClick={() => togglePin.mutate({ id: g.id, pinned: !g.pinned })}
+                      aria-label={g.pinned ? '取消置顶' : '置顶'}
+                      className={cn(
+                        touch || g.pinned ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100',
+                        g.pinned && 'text-m3'
+                      )}
+                    >
+                      {g.pinned ? <Pin size={15} /> : <PinOff size={15} />}
+                    </IconButton>
                     <IconButton
                       size="sm"
                       onClick={() => requestDelete(g)}

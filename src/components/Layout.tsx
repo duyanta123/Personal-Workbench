@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
+  BarChart3,
   BookOpen,
+  Code2,
   Database,
+  Dumbbell,
   Flame,
   Home,
   ListTodo,
@@ -46,7 +49,10 @@ export const NAV: NavItem[] = [
   { to: '/checkins', label: '习惯打卡', icon: Flame, tab: true, group: '工作台' },
   { to: '/ledger', label: '记账', icon: Wallet, tab: true, group: '记录' },
   { to: '/goals', label: '长期目标', icon: Target, tab: true, group: '记录' },
-  { to: '/notes', label: '内容记录', icon: BookOpen, tab: false, group: '记录' }
+  { to: '/notes', label: '内容记录', icon: BookOpen, tab: false, group: '记录' },
+  { to: '/practice', label: '刷题记录', icon: Code2, tab: false, group: '记录' },
+  { to: '/workout', label: '健身记录', icon: Dumbbell, tab: false, group: '记录' },
+  { to: '/insight', label: '洞察复盘', icon: BarChart3, tab: false, group: '记录' }
 ]
 
 const GROUPS = ['工作台', '记录']

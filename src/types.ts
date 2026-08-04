@@ -8,6 +8,7 @@ export interface Todo {
   done: boolean
   sort_order: number
   due_date: string | null
+  pinned: boolean
   created_at: string
   updated_at: string
 }
@@ -17,6 +18,7 @@ export interface Habit {
   user_id: string
   name: string
   emoji: string
+  pinned: boolean
   created_at: string
 }
 
@@ -48,9 +50,12 @@ export interface Goal {
   target: number
   unit: string | null
   note: string | null
+  pinned: boolean
   created_at: string
   updated_at: string
 }
+
+export type NoteLayout = 'default' | 'feature' | 'quote'
 
 export interface Note {
   id: string
@@ -59,8 +64,19 @@ export interface Note {
   body: string
   tags: string[]
   pinned: boolean
+  layout: NoteLayout
+  image_url: string | null
   created_at: string
   updated_at: string
+}
+
+export interface PomodoroSession {
+  id: string
+  user_id: string
+  date: string
+  count: number
+  minutes: number
+  created_at: string
 }
 
 export interface UserPreferences {
@@ -75,5 +91,54 @@ export interface UserAvatar {
   user_id: string
   storage_path: string
   is_active: boolean
+  created_at: string
+}
+
+export type PracticeStatus = 'todo' | 'doing' | 'ac_solo' | 'ac_hint' | 'failed'
+export type PracticeDifficulty = 'easy' | 'medium' | 'hard'
+
+export interface PracticeProblem {
+  id: string
+  user_id: string
+  title: string
+  platform: string
+  difficulty: PracticeDifficulty
+  status: PracticeStatus
+  tags: string[]
+  url: string | null
+  note: string | null
+  solved_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkoutSession {
+  id: string
+  user_id: string
+  date: string
+  body_part: string
+  duration_min: number | null
+  note: string | null
+  created_at: string
+}
+
+export interface WorkoutExercise {
+  id: string
+  session_id: string
+  name: string
+  sets: number
+  reps: number
+  weight: number
+  note: string | null
+  created_at: string
+}
+
+export interface BodyMetric {
+  id: string
+  user_id: string
+  date: string
+  weight: number | null
+  body_fat: number | null
+  note: string | null
   created_at: string
 }

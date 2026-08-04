@@ -58,3 +58,15 @@ export function useDeleteGoal() {
     onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey })
   })
 }
+
+/** 切换置顶 */
+export function useToggleGoalPin() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, pinned }: { id: string; pinned: boolean }) => {
+      const { error } = await supabase!.from('goals').update({ pinned }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey })
+  })
+}

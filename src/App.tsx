@@ -8,6 +8,9 @@ import Checkins from './pages/Checkins'
 import Ledger from './pages/Ledger'
 import Goals from './pages/Goals'
 import Notes from './pages/Notes'
+import Practice from './pages/Practice'
+import Workout from './pages/Workout'
+import Insight from './pages/Insight'
 
 export default function App() {
   return (
@@ -21,6 +24,9 @@ export default function App() {
           <Route path="/ledger" element={<Ledger />} />
           <Route path="/goals" element={<Goals />} />
           <Route path="/notes" element={<Notes />} />
+          <Route path="/practice" element={<Practice />} />
+          <Route path="/workout" element={<Workout />} />
+          <Route path="/insight" element={<Insight />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

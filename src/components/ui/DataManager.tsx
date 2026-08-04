@@ -5,6 +5,8 @@ import { useNotes } from '../../hooks/useNotes'
 import { useLedgerEntries } from '../../hooks/useLedger'
 import { useHabits, useHabitLogs } from '../../hooks/useHabits'
 import { useGoals } from '../../hooks/useGoals'
+import { useProblems } from '../../hooks/useProblems'
+import { useBodyMetrics, useWorkoutSessions } from '../../hooks/useWorkouts'
 import { useImportData } from '../../hooks/useImportData'
 import { useToastStore } from '../../stores/toast'
 import { buildCSV, buildJSON, downloadFile } from '../../utils/export'
@@ -24,12 +26,23 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
   const entries = useLedgerEntries()
   const goals = useGoals()
   const notes = useNotes()
+  const problems = useProblems()
+  const workoutSessions = useWorkoutSessions()
+  const metrics = useBodyMetrics()
   const importData = useImportData()
   const push = useToastStore((s) => s.push)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const allLoaded =
-    todos.data && habits.data && logs.data && entries.data && goals.data && notes.data
+    todos.data &&
+    habits.data &&
+    logs.data &&
+    entries.data &&
+    goals.data &&
+    notes.data &&
+    problems.data &&
+    workoutSessions.data &&
+    metrics.data
 
   function exportJSON() {
     const payload: BackupData = {
@@ -38,7 +51,10 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
       habit_logs: logs.data,
       ledger_entries: entries.data,
       goals: goals.data,
-      notes: notes.data
+      notes: notes.data,
+      practice_problems: problems.data,
+      workout_sessions: workoutSessions.data,
+      body_metrics: metrics.data
     }
     downloadFile(`工作台备份-${stamp()}.json`, buildJSON(payload), 'application/json')
     push({ kind: 'success', message: 'JSON 备份已下载' })

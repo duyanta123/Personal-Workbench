@@ -95,3 +95,15 @@ export function useDeleteTodo() {
     onSuccess: () => qc.invalidateQueries({ queryKey: todosKey })
   })
 }
+
+/** 切换置顶 */
+export function useToggleTodoPin() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, pinned }: { id: string; pinned: boolean }) => {
+      const { error } = await supabase!.from('todos').update({ pinned }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: todosKey })
+  })
+}

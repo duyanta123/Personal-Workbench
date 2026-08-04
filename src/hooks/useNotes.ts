@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import type { Note } from '../types'
+import type { Note, NoteLayout } from '../types'
 
 export const notesKey = ['notes']
 
@@ -23,10 +23,17 @@ export function useNotes() {
 export function useAddNote() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { title: string | null; body: string; tags: string[]; pinned?: boolean }) => {
+    mutationFn: async (input: {
+      title: string | null
+      body: string
+      tags: string[]
+      pinned?: boolean
+      layout?: NoteLayout
+      image_url?: string | null
+    }) => {
       const { data, error } = await supabase!
         .from('notes')
-        .insert({ ...input, pinned: input.pinned ?? false })
+        .insert({ ...input, pinned: input.pinned ?? false, layout: input.layout ?? 'default' })
         .select()
         .single()
       if (error) throw error
@@ -39,7 +46,19 @@ export function useAddNote() {
 export function useUpdateNote() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: { title: string | null; body: string; tags: string[] } }) => {
+    mutationFn: async ({
+      id,
+      patch
+    }: {
+      id: string
+      patch: {
+        title: string | null
+        body: string
+        tags: string[]
+        layout?: NoteLayout
+        image_url?: string | null
+      }
+    }) => {
       const { error } = await supabase!.from('notes').update(patch).eq('id', id)
       if (error) throw error
     },

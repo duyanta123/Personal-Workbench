@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Pencil, Plus, Settings2, Trash2, Wallet, X } from 'lucide-react'
+import { Pencil, Plus, Search, Settings2, Trash2, Wallet, X } from 'lucide-react'
 import { useAddLedgerEntry, useDeleteLedgerEntry, useLedgerEntries, useUpdateLedgerEntry } from '../hooks/useLedger'
 import { usePreferences, useUpdatePreferences, mergeCategories } from '../hooks/usePreferences'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
@@ -16,6 +16,7 @@ import Skeleton from '../components/ui/Skeleton'
 import EmptyState from '../components/ui/EmptyState'
 import PageHeader from '../components/ui/PageHeader'
 import IconButton from '../components/ui/IconButton'
+import SideCard from '../components/ui/SideCard'
 import { cn } from '../lib/cn'
 
 const BUILTIN_CATS = {
@@ -44,6 +45,7 @@ export default function Ledger() {
   const [newCat, setNewCat] = useState('')
   const [budgetEdit, setBudgetEdit] = useState(false)
   const [budgetVal, setBudgetVal] = useState('')
+  const [query, setQuery] = useState('')
 
   const month = monthPrefix()
   const now = new Date()
@@ -56,6 +58,19 @@ export default function Ledger() {
   )
   const expenseTotal = monthEntries.filter((e) => e.kind === 'expense').reduce((s, e) => s + e.amount, 0)
   const incomeTotal = monthEntries.filter((e) => e.kind === 'income').reduce((s, e) => s + e.amount, 0)
+  const todayExpense = (entries ?? [])
+    .filter((e) => e.kind === 'expense' && e.entry_date === todayStr())
+    .reduce((s, e) => s + e.amount, 0)
+
+  // 搜索过滤：分类 / 备注
+  const visibleEntries = useMemo(() => {
+    if (!entries) return []
+    if (!query.trim()) return entries
+    const q = query.trim().toLowerCase()
+    return entries.filter(
+      (e) => e.category.toLowerCase().includes(q) || (e.note ?? '').toLowerCase().includes(q)
+    )
+  }, [entries, query])
 
   const customCats = prefs?.categories?.[kind] ?? []
   const cats = useMemo(() => mergeCategories(BUILTIN_CATS[kind], customCats), [kind, customCats])
@@ -155,6 +170,8 @@ export default function Ledger() {
         description="清楚每一笔的流向。"
       />
 
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0 space-y-4">
       {/* 本月汇总 */}
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-2xl border border-border bg-surface p-4">
@@ -378,7 +395,17 @@ export default function Ledger() {
         </div>
       )}
 
-      {/* 明细 */}
+      {/* 搜索 + 明细 */}
+      <div className="relative">
+        <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="搜索分类、备注…"
+          className="pl-9"
+        />
+      </div>
+
       {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -391,9 +418,11 @@ export default function Ledger() {
           title="还没有账单"
           description="先记一笔吧。"
         />
+      ) : visibleEntries.length === 0 ? (
+        <EmptyState icon={<Search size={22} />} title="没有匹配的账单" />
       ) : (
         <ul className="space-y-2">
-          {entries.map((e) => (
+          {visibleEntries.map((e) => (
             <li
               key={e.id}
               className="group flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3 transition-colors duration-150 hover:bg-hover"
@@ -428,6 +457,53 @@ export default function Ledger() {
           ))}
         </ul>
       )}
+        </div>
+
+        {/* 右栏统计 */}
+        <aside className="h-fit space-y-3 lg:sticky lg:top-4">
+          <SideCard title="收支概况" icon={<Wallet size={14} />}>
+            <ul className="space-y-2">
+              {[
+                { k: '本月收入', v: `¥${incomeTotal.toFixed(2)}`, c: 'var(--m1)' },
+                { k: '本月支出', v: `¥${expenseTotal.toFixed(2)}`, c: 'var(--danger)' },
+                { k: '净结余', v: `¥${(incomeTotal - expenseTotal).toFixed(2)}` },
+                { k: '今日支出', v: `¥${todayExpense.toFixed(2)}` },
+                { k: '总笔数', v: `${entries?.length ?? 0} 笔` }
+              ].map((r) => (
+                <li key={r.k} className="flex items-center justify-between text-xs">
+                  <span className="text-ink-2">{r.k}</span>
+                  <span
+                    className="font-bold tabular-nums"
+                    style={r.c ? { color: r.c } : undefined}
+                  >
+                    {r.v}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </SideCard>
+          <SideCard title="支出分类占比" icon={<Wallet size={14} />}>
+            {catTotals.length === 0 ? (
+              <p className="py-2 text-center text-xs text-ink-3">暂无支出记录</p>
+            ) : (
+              <ul className="space-y-2">
+                {catTotals.slice(0, 6).map(([cat, val]) => {
+                  const pct = expenseTotal ? Math.round((val / expenseTotal) * 100) : 0
+                  return (
+                    <li key={cat} className="flex items-center gap-2 text-xs">
+                      <span className="w-8 shrink-0 truncate text-ink-2">{cat}</span>
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-nested">
+                        <div className="h-full rounded-full bg-m3" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-10 shrink-0 text-right text-ink-3 tabular-nums">{pct}%</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </SideCard>
+        </aside>
+      </div>
     </div>
   )
 }

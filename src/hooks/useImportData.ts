@@ -8,9 +8,22 @@ export interface BackupData {
   ledger_entries?: unknown[]
   goals?: unknown[]
   notes?: unknown[]
+  practice_problems?: unknown[]
+  workout_sessions?: unknown[]
+  body_metrics?: unknown[]
 }
 
-const TABLES = ['todos', 'habits', 'habit_logs', 'ledger_entries', 'goals', 'notes'] as const
+const TABLES = [
+  'todos',
+  'habits',
+  'habit_logs',
+  'ledger_entries',
+  'goals',
+  'notes',
+  'practice_problems',
+  'workout_sessions',
+  'body_metrics'
+] as const
 
 /**
  * 导入备份：逐表插入（重新挂到当前用户，忽略原 id / user_id / 时间戳）。

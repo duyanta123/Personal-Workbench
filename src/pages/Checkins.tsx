@@ -1,7 +1,14 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Check, Flame, Plus, Trash2 } from 'lucide-react'
-import { useAddHabit, useDeleteHabit, useHabitLogs, useHabits, useToggleHabitLogDate } from '../hooks/useHabits'
+import { Check, Flame, Pin, PinOff, Plus, Search, Trash2 } from 'lucide-react'
+import {
+  useAddHabit,
+  useDeleteHabit,
+  useHabitLogs,
+  useHabits,
+  useToggleHabitLogDate,
+  useToggleHabitPin
+} from '../hooks/useHabits'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
@@ -18,6 +25,8 @@ import PageHeader from '../components/ui/PageHeader'
 import IconButton from '../components/ui/IconButton'
 import IconPicker from '../components/ui/IconPicker'
 import Progress from '../components/ui/Progress'
+import Ring from '../components/ui/Ring'
+import SideCard from '../components/ui/SideCard'
 import { cn } from '../lib/cn'
 
 const WEEK = ['一', '二', '三', '四', '五', '六', '日']
@@ -37,6 +46,7 @@ export default function Checkins() {
   const { data: habits, isLoading } = useHabits()
   const { data: logs } = useHabitLogs()
   const toggleLog = useToggleHabitLogDate()
+  const togglePin = useToggleHabitPin()
   const addHabit = useAddHabit()
   const deleteHabit = useDeleteHabit()
   const push = useToastStore((s) => s.push)
@@ -44,6 +54,7 @@ export default function Checkins() {
 
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('flame')
+  const [query, setQuery] = useState('')
 
   const today = todayStr()
   const doneToday = new Set((logs ?? []).filter((l) => l.log_date === today).map((l) => l.habit_id))
@@ -66,6 +77,26 @@ export default function Checkins() {
   }
   const elapsed = Math.min(Number(today.slice(8, 10)), new Date(year, month, 0).getDate())
   const monthRate = elapsed ? Math.round((monthLoggedDays.size / elapsed) * 100) : 0
+
+  // 搜索过滤
+  const searching = query.trim().length > 0
+  const visibleHabits = useMemo(
+    () =>
+      searching
+        ? (habits ?? []).filter((h) => h.name.toLowerCase().includes(query.trim().toLowerCase()))
+        : (habits ?? []),
+    [habits, searching, query]
+  )
+
+  // 连续天数排行（top6）
+  const rankings = useMemo(
+    () =>
+      (habits ?? [])
+        .map((h) => ({ habit: h, streak: computeStreak(byHabit.get(h.id) ?? new Set(), today) }))
+        .sort((a, b) => b.streak - a.streak)
+        .slice(0, 6),
+    [habits, byHabit, today]
+  )
 
   const { requestDelete } = useDeferredDelete<Habit>({
     key: ['habits'],
@@ -108,49 +139,64 @@ export default function Checkins() {
         description="每天坚持一点点。"
       />
 
-      {/* 本月概览 */}
-      <div className="rounded-2xl border border-border bg-surface p-4">
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-ink">本月累计打卡</span>
-          <span className="text-ink-2 tabular-nums">
-            {monthLoggedDays.size} / {elapsed} 天
-          </span>
-        </div>
-        <Progress value={monthRate} color="bg-m2" className="mt-2" />
-        <p className="mt-1 text-right text-xs text-ink-3 tabular-nums">完成率 {monthRate}%</p>
-      </div>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0 space-y-4">
+          {/* 本月概览 */}
+          <div className="rounded-2xl border border-border bg-surface p-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-ink">本月累计打卡</span>
+              <span className="text-ink-2 tabular-nums">
+                {monthLoggedDays.size} / {elapsed} 天
+              </span>
+            </div>
+            <Progress value={monthRate} color="bg-m2" className="mt-2" />
+            <p className="mt-1 text-right text-xs text-ink-3 tabular-nums">完成率 {monthRate}%</p>
+          </div>
 
-      {/* 添加习惯 */}
-      <form onSubmit={handleAdd} className="flex gap-2 rounded-2xl border border-border bg-surface p-4">
-        <IconPicker value={icon} onChange={setIcon} aria-label="选择图标" />
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="习惯名称，如：喝水 8 杯"
-          className="flex-1"
-        />
-        <Button type="submit" disabled={!name.trim()}>
-          <Plus size={16} />
-          添加
-        </Button>
-      </form>
+          {/* 添加习惯 */}
+          <form onSubmit={handleAdd} className="flex gap-2 rounded-2xl border border-border bg-surface p-4">
+            <IconPicker value={icon} onChange={setIcon} aria-label="选择图标" />
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="习惯名称，如：喝水 8 杯"
+              className="flex-1"
+            />
+            <Button type="submit" disabled={!name.trim()}>
+              <Plus size={16} />
+              添加
+            </Button>
+          </form>
 
-      {/* 习惯列表 */}
-      {isLoading ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-56 w-full" />
-          ))}
-        </div>
-      ) : !habits?.length ? (
-        <EmptyState
-          icon={<Flame size={22} />}
-          title="还没有习惯"
-          description="添加一个开始打卡吧。"
-        />
-      ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {habits.map((h) => {
+          {/* 搜索 */}
+          <div className="relative">
+            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索习惯…"
+              className="pl-9"
+            />
+          </div>
+
+          {/* 习惯列表 */}
+          {isLoading ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-56 w-full" />
+              ))}
+            </div>
+          ) : !habits?.length ? (
+            <EmptyState
+              icon={<Flame size={22} />}
+              title="还没有习惯"
+              description="添加一个开始打卡吧。"
+            />
+          ) : visibleHabits.length === 0 ? (
+            <EmptyState icon={<Search size={22} />} title="没有匹配的习惯" />
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {visibleHabits.map((h) => {
             const done = doneToday.has(h.id)
             const streak = computeStreak(byHabit.get(h.id) ?? new Set(), today)
             const logged = byHabit.get(h.id) ?? new Set<string>()
@@ -175,14 +221,27 @@ export default function Checkins() {
                   >
                     <Icon size={20} className={done ? 'text-m1' : 'text-ink-2'} />
                   </button>
-                  <IconButton
-                    size="sm"
-                    onClick={() => requestDelete(h)}
-                    aria-label="删除习惯"
-                    className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}
-                  >
-                    <Trash2 size={16} />
-                  </IconButton>
+                  <div className="flex gap-0.5">
+                    <IconButton
+                      size="sm"
+                      onClick={() => togglePin.mutate({ id: h.id, pinned: !h.pinned })}
+                      aria-label={h.pinned ? '取消置顶' : '置顶'}
+                      className={cn(
+                        touch || h.pinned ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100',
+                        h.pinned && 'text-m3'
+                      )}
+                    >
+                      {h.pinned ? <Pin size={15} /> : <PinOff size={15} />}
+                    </IconButton>
+                    <IconButton
+                      size="sm"
+                      onClick={() => requestDelete(h)}
+                      aria-label="删除习惯"
+                      className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}
+                    >
+                      <Trash2 size={16} />
+                    </IconButton>
+                  </div>
                 </div>
                 <div className="mt-3 text-sm font-medium text-ink">{h.name}</div>
                 <div className="mt-1 flex items-center gap-1.5 text-xs text-ink-3">
@@ -248,8 +307,52 @@ export default function Checkins() {
               </div>
             )
           })}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* 右栏统计 */}
+        <aside className="h-fit space-y-3 lg:sticky lg:top-4">
+          <SideCard title="今日打卡" icon={<Flame size={14} />}>
+            <div className="flex items-center gap-4">
+              <Ring
+                value={habits?.length ? (doneToday.size / habits.length) * 100 : 0}
+                size={88}
+                color="var(--m2)"
+              >
+                <span className="text-lg font-bold tabular-nums text-ink">
+                  {doneToday.size}/{habits?.length ?? 0}
+                </span>
+              </Ring>
+              <div className="text-xs text-ink-2">
+                <div>
+                  已完成 <span className="font-bold text-ink tabular-nums">{doneToday.size}</span> /{' '}
+                  {habits?.length ?? 0}
+                </div>
+                <div className="mt-1 text-ink-3">
+                  完成率{' '}
+                  {habits?.length ? Math.round((doneToday.size / habits.length) * 100) : 0}%
+                </div>
+              </div>
+            </div>
+          </SideCard>
+          <SideCard title="连续天数排行" icon={<Flame size={14} />}>
+            {rankings.length === 0 ? (
+              <p className="py-2 text-center text-xs text-ink-3">还没有打卡记录</p>
+            ) : (
+              <ul className="space-y-2">
+                {rankings.map(({ habit, streak }) => (
+                  <li key={habit.id} className="flex items-center gap-2 text-xs">
+                    <span className="w-4 shrink-0 text-center">{habit.emoji}</span>
+                    <span className="min-w-0 flex-1 truncate text-ink-2">{habit.name}</span>
+                    <span className="shrink-0 font-bold text-m3 tabular-nums">{streak} 天</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SideCard>
+        </aside>
+      </div>
     </div>
   )
 }
