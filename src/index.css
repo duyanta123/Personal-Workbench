@@ -1,24 +1,95 @@
 @import "tailwindcss";
 
-@theme {
-  --color-page: #f4f3f0;
-  --color-card: #fcfbf8;
-  --color-nested: #f7f6f1;
-  --color-ink: #232220;
-  --color-ink-2: #6b665d;
-  --color-ink-3: #8c877c;
-  --color-accent: #2f2e2b;
-  --color-accent-2: #efeee8;
-  --color-m1: #8aa394;
-  --color-m2: #7a8da3;
-  --color-m3: #c4a572;
-  --color-m4: #b8837a;
-  --color-m5: #a09ab5;
-  --color-danger: #c0564f;
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 4px 14px rgba(0, 0, 0, 0.05);
-  --shadow-overlay: 0 12px 40px rgba(0, 0, 0, 0.18);
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC",
-    "Microsoft YaHei", sans-serif;
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+   Astryx 设计令牌（浅色/暗色）
+   ============================================================ */
+:root {
+  /* 背景与表面 */
+  --page: #f8f4ed;
+  --surface: #ffffff;
+  --nested: #f2eee7;
+  --ink: #15110c;
+  --ink-2: #4e606f;
+  --ink-3: #a4b0bc;
+
+  /* 主操作色 */
+  --accent: #225bff;
+  --accent-hover: #0d44e8;
+  --accent-2: #edf2ff;
+
+  /* 语义色 */
+  --m1: #0d8626; /* success */
+  --m2: #0b66cc; /* info */
+  --m3: #a67500; /* warning（文字安全琥珀） */
+  --m4: #6e6155; /* 暖棕 */
+  --m5: #524740; /* 墨蓝 */
+  --danger: #e3193b;
+
+  /* 边框与交互层 */
+  --border: rgba(5, 54, 89, 0.1);
+  --hover: rgba(21, 17, 12, 0.08);
+  --press: rgba(21, 17, 12, 0.16);
+
+  /* 阴影（耳语级，静止无影） */
+  --shadow-card: 0 1px 1px rgba(21, 17, 12, 0.05), 0 2px 8px rgba(21, 17, 12, 0.06);
+  --shadow-raised: 0 1px 2px rgba(21, 17, 12, 0.06), 0 2px 12px rgba(21, 17, 12, 0.08);
+  --shadow-overlay: 0 2px 2px rgba(21, 17, 12, 0.07), 0 8px 24px rgba(21, 17, 12, 0.12);
+}
+
+.dark {
+  --page: #111112;
+  --surface: #1f1f22;
+  --nested: #1a1a1d;
+  --ink: #dfe2e5;
+  --ink-2: #aaafb5;
+  --ink-3: #6f747c;
+
+  --accent: #3d87ff;
+  --accent-hover: #5b9cff;
+  --accent-2: #08257a;
+
+  --m1: #34c759;
+  --m2: #48a3ff;
+  --m3: #f2c00b;
+  --m4: #b8a47f;
+  --m5: #5b85ff;
+  --danger: #f5394f;
+
+  --border: rgba(242, 244, 246, 0.1);
+  --hover: rgba(223, 226, 229, 0.08);
+  --press: rgba(223, 226, 229, 0.16);
+
+  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 12px rgba(0, 0, 0, 0.4);
+  --shadow-overlay: 0 2px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+/* 映射为 Tailwind 令牌：工具类自动跟随主题 */
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-nested: var(--nested);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-2: var(--accent-2);
+  --color-m1: var(--m1);
+  --color-m2: var(--m2);
+  --color-m3: var(--m3);
+  --color-m4: var(--m4);
+  --color-m5: var(--m5);
+  --color-danger: var(--danger);
+  --color-border: var(--border);
+  --color-hover: var(--hover);
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-overlay: var(--shadow-overlay);
+  --font-sans: "Figtree Variable", system-ui, -apple-system, "Segoe UI", Roboto,
+    "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 @layer base {
@@ -26,18 +97,27 @@
     font-family: var(--font-sans);
   }
   body {
-    background: var(--color-page);
-    color: var(--color-ink);
+    background: var(--page);
+    color: var(--ink);
     -webkit-font-smoothing: antialiased;
   }
-}
 
-/* 简易滚动条 */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.12);
-  border-radius: 4px;
+  /* 简易滚动条 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--ink-3);
+    opacity: 0.5;
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-2);
+  }
+
+  /* 数字等宽，记账/统计更整齐 */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
 }

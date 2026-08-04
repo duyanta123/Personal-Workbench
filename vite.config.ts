@@ -16,8 +16,8 @@ export default defineConfig({
         short_name: '工作台',
         description: '每日计划、习惯打卡、记账、长期目标与内容记录',
         lang: 'zh-CN',
-        theme_color: '#2f2e2b',
-        background_color: '#f4f3f0',
+        theme_color: '#15110c',
+        background_color: '#f8f4ed',
         display: 'standalone',
         start_url: '/',
         icons: [
@@ -37,6 +37,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    setupFiles: './src/test/setup.ts'
+    setupFiles: './src/test/setup.ts',
+    include: ['src/**/*.test.{ts,tsx}']
   }
 })

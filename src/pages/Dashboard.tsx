@@ -1,4 +1,6 @@
 import { Link } from 'react-router-dom'
+import { ArrowRight, BookOpen, Flame, ListTodo, Sprout, Target, Wallet } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useGoals } from '../hooks/useGoals'
 import { useHabitLogs, useHabits } from '../hooks/useHabits'
 import { useLedgerEntries } from '../hooks/useLedger'
@@ -6,49 +8,58 @@ import { useNotes } from '../hooks/useNotes'
 import { useTodos } from '../hooks/useTodos'
 import { monthPrefix, todayStr } from '../utils/date'
 import { computeStreak } from '../utils/streak'
+import Card from '../components/ui/Card'
+import PageHeader from '../components/ui/PageHeader'
+import Skeleton from '../components/ui/Skeleton'
+import EmptyState from '../components/ui/EmptyState'
 
 const hour = new Date().getHours()
 const greet = hour < 6 ? '夜深了' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好'
 
-const MODULES = [
-  { to: '/todos', icon: '📋', name: '每日计划', desc: '今日待办清单', cls: 'bg-m1/15 text-m1' },
-  { to: '/checkins', icon: '🔥', name: '习惯打卡', desc: '坚持每一天', cls: 'bg-m2/15 text-m2' },
-  { to: '/ledger', icon: '💰', name: '记账', desc: '收支心中有数', cls: 'bg-m3/15 text-m3' },
-  { to: '/goals', icon: '🎯', name: '长期目标', desc: '慢慢靠近', cls: 'bg-m4/15 text-m4' },
-  { to: '/notes', icon: '📝', name: '内容记录', desc: '灵感与收藏', cls: 'bg-m5/15 text-m5' }
+const MODULES: { to: string; icon: LucideIcon; name: string; desc: string; cls: string }[] = [
+  { to: '/todos', icon: ListTodo, name: '每日计划', desc: '今日待办清单', cls: 'bg-m1/10 text-m1' },
+  { to: '/checkins', icon: Flame, name: '习惯打卡', desc: '坚持每一天', cls: 'bg-m2/10 text-m2' },
+  { to: '/ledger', icon: Wallet, name: '记账', desc: '收支心中有数', cls: 'bg-m3/10 text-m3' },
+  { to: '/goals', icon: Target, name: '长期目标', desc: '慢慢靠近', cls: 'bg-m4/10 text-m4' },
+  { to: '/notes', icon: BookOpen, name: '内容记录', desc: '灵感与收藏', cls: 'bg-m5/10 text-m5' }
 ]
 
 export default function Dashboard() {
-  const { data: todos } = useTodos()
-  const { data: habits } = useHabits()
-  const { data: logs } = useHabitLogs()
-  const { data: entries } = useLedgerEntries()
-  const { data: goals } = useGoals()
-  const { data: notes } = useNotes()
+  const todos = useTodos()
+  const habits = useHabits()
+  const logs = useHabitLogs()
+  const entries = useLedgerEntries()
+  const goals = useGoals()
+  const notes = useNotes()
+
+  const loading = [todos, habits, logs, entries, goals, notes].some((q) => q.isLoading)
 
   const today = todayStr()
   const month = monthPrefix()
 
-  const doneCount = todos?.filter((t) => t.done).length ?? 0
-  const totalCount = todos?.length ?? 0
+  const doneCount = todos.data?.filter((t) => t.done).length ?? 0
+  const totalCount = todos.data?.length ?? 0
 
   const byHabit = new Map<string, Set<string>>()
-  for (const l of logs ?? []) {
+  for (const l of logs.data ?? []) {
     const s = byHabit.get(l.habit_id) ?? new Set<string>()
     s.add(l.log_date)
     byHabit.set(l.habit_id, s)
   }
-  const topStreak = Math.max(0, ...(habits ?? []).map((h) => computeStreak(byHabit.get(h.id) ?? new Set(), today)))
+  const topStreak = Math.max(
+    0,
+    ...(habits.data ?? []).map((h) => computeStreak(byHabit.get(h.id) ?? new Set(), today))
+  )
 
-  const monthExpense = (entries ?? [])
+  const monthExpense = (entries.data ?? [])
     .filter((e) => e.kind === 'expense' && e.entry_date.startsWith(month))
     .reduce((s, e) => s + e.amount, 0)
-  const monthIncome = (entries ?? [])
+  const monthIncome = (entries.data ?? [])
     .filter((e) => e.kind === 'income' && e.entry_date.startsWith(month))
     .reduce((s, e) => s + e.amount, 0)
 
-  const goalTotal = goals?.length ?? 0
-  const goalDone = (goals ?? []).filter((g) => g.current >= g.target).length
+  const goalTotal = goals.data?.length ?? 0
+  const goalDone = (goals.data ?? []).filter((g) => g.current >= g.target).length
 
   const stats = [
     { label: '今日待办', value: totalCount ? `${doneCount}/${totalCount}` : '–', sub: `${doneCount} 项已完成` },
@@ -59,26 +70,42 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      {/* 问候卡 */}
-      <section className="flex flex-col gap-6 rounded-2xl bg-card p-6 shadow-card md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-xs text-ink-3">{today}</p>
-          <h1 className="mt-1 text-2xl font-semibold">{greet}</h1>
-          <p className="mt-1 text-sm text-ink-2">今天也按自己的节奏来。</p>
+      {/* 问候 */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <PageHeader
+          eyebrow="OVERVIEW"
+          title={greet}
+          description={`${today} · 今天也按自己的节奏来。`}
+        />
+        <div className="hidden h-14 w-14 items-center justify-center rounded-2xl bg-surface text-m1 shadow-card md:flex">
+          <Sprout size={28} />
         </div>
-        <div className="text-5xl">🌱</div>
-      </section>
+      </div>
 
       {/* 统计 */}
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {stats.map((s) => (
-          <div key={s.label} className="rounded-2xl bg-card p-4 shadow-card">
-            <div className="text-xs text-ink-3">{s.label}</div>
-            <div className="mt-1 text-xl font-semibold">{s.value}</div>
-            <div className="mt-0.5 text-xs text-ink-3">{s.sub}</div>
-          </div>
-        ))}
-      </section>
+      {loading ? (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i} padding="md">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="mt-2 h-6 w-20" />
+              <Skeleton className="mt-1 h-3 w-24" />
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {stats.map((s) => (
+            <Card key={s.label} variant="raised" padding="md">
+              <div className="text-xs text-ink-3">{s.label}</div>
+              <div className="mt-1 text-2xl font-bold tracking-tight text-ink tabular-nums">
+                {s.value}
+              </div>
+              <div className="mt-0.5 text-xs text-ink-3">{s.sub}</div>
+            </Card>
+          ))}
+        </section>
+      )}
 
       {/* 模块入口 */}
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
@@ -86,41 +113,61 @@ export default function Dashboard() {
           <Link
             key={m.to}
             to={m.to}
-            className="rounded-2xl bg-card p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-overlay"
+            className="group rounded-2xl border border-border bg-surface p-4 transition-all duration-150 hover:shadow-raised"
           >
-            <div className={`inline-flex h-10 w-10 items-center justify-center rounded-xl text-xl ${m.cls}`}>
-              {m.icon}
+            <div
+              className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${m.cls}`}
+            >
+              <m.icon size={20} />
             </div>
-            <div className="mt-3 text-sm font-medium">{m.name}</div>
+            <div className="mt-3 text-sm font-medium text-ink">{m.name}</div>
             <div className="mt-0.5 text-xs text-ink-3">{m.desc}</div>
           </Link>
         ))}
       </section>
 
-      {/* 最近笔记 */}
-      <section className="rounded-2xl bg-card p-6 shadow-card">
+      {/* 最近记录 */}
+      <Card padding="lg">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">最近记录</h2>
-          <Link to="/notes" className="text-xs text-ink-3 hover:text-accent">
-            全部 →
+          <h2 className="text-sm font-semibold text-ink">最近记录</h2>
+          <Link
+            to="/notes"
+            className="inline-flex items-center gap-1 text-xs font-medium text-accent transition-colors hover:text-accent-hover"
+          >
+            全部
+            <ArrowRight size={14} />
           </Link>
         </div>
-        {!notes?.length ? (
-          <p className="mt-4 text-sm text-ink-3">还没有内容记录，去「内容记录」写点什么吧。</p>
+        {loading ? (
+          <div className="mt-4 space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : !notes.data?.length ? (
+          <EmptyState
+            icon={<BookOpen size={22} />}
+            title="还没有内容记录"
+            description="去「内容记录」写点什么吧。"
+          />
         ) : (
-          <ul className="mt-4 divide-y divide-ink/5">
-            {notes.slice(0, 4).map((n) => (
+          <ul className="mt-4 divide-y divide-border">
+            {notes.data.slice(0, 4).map((n) => (
               <li key={n.id} className="flex items-start justify-between gap-4 py-3">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{n.title || '无标题'}</div>
+                  <div className="truncate text-sm font-medium text-ink">
+                    {n.title || '无标题'}
+                  </div>
                   <div className="mt-0.5 line-clamp-2 text-xs text-ink-2">{n.body}</div>
                 </div>
-                <span className="shrink-0 text-xs text-ink-3">{n.updated_at.slice(0, 10)}</span>
+                <span className="shrink-0 text-xs text-ink-3 tabular-nums">
+                  {n.updated_at.slice(0, 10)}
+                </span>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </div>
   )
 }

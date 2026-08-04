@@ -1,7 +1,16 @@
 import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
+import { BookOpen, Pencil, Save, Trash2, X } from 'lucide-react'
 import { useAddNote, useDeleteNote, useNotes, useUpdateNote } from '../hooks/useNotes'
 import type { Note } from '../types'
+import Button from '../components/ui/Button'
+import Input, { Textarea } from '../components/ui/Input'
+import Badge from '../components/ui/Badge'
+import Skeleton from '../components/ui/Skeleton'
+import EmptyState from '../components/ui/EmptyState'
+import PageHeader from '../components/ui/PageHeader'
+import IconButton from '../components/ui/IconButton'
+import { cn } from '../lib/cn'
 
 const EMPTY = { title: '', body: '', tags: '' }
 
@@ -53,52 +62,46 @@ export default function Notes() {
     setForm({ title: n.title ?? '', body: n.body, tags: n.tags.join(', ') })
   }
 
-  const inputCls =
-    'w-full rounded-xl border border-ink/15 bg-card px-4 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20'
-
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">内容记录</h1>
+      <PageHeader
+        eyebrow="NOTES"
+        title="内容记录"
+        description="灵感、摘录与收藏。"
+      />
 
       {/* 编辑/新建表单 */}
-      <form onSubmit={handleSubmit} className="space-y-3 rounded-2xl bg-card p-4 shadow-card">
-        <input
+      <form onSubmit={handleSubmit} className="space-y-3 rounded-2xl border border-border bg-surface p-4">
+        <Input
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
           placeholder="标题（可选）"
-          className={inputCls}
         />
-        <textarea
+        <Textarea
           value={form.body}
           onChange={(e) => setForm({ ...form, body: e.target.value })}
           placeholder="写点什么：灵感、摘录、收藏的链接…"
           rows={4}
-          className={`${inputCls} resize-none`}
+          noResize
         />
-        <div className="flex items-center justify-between gap-3">
-          <input
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Input
             value={form.tags}
             onChange={(e) => setForm({ ...form, tags: e.target.value })}
             placeholder="标签，用逗号分隔（可选）"
-            className={`${inputCls} flex-1`}
+            className="min-w-48 flex-1"
           />
           <div className="flex gap-2">
             {editingId && (
-              <button
-                type="button"
-                onClick={reset}
-                className="rounded-xl bg-nested px-4 py-2 text-sm text-ink-2"
-              >
+              <Button type="button" variant="ghost" onClick={reset}>
+                <X size={16} />
                 取消
-              </button>
+              </Button>
             )}
-            <button
-              type="submit"
-              disabled={!form.body.trim()}
-              className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-page disabled:opacity-40"
-            >
+            <Button type="submit" disabled={!form.body.trim()}>
+              <Save size={16} />
               {editingId ? '保存修改' : '保存'}
-            </button>
+            </Button>
           </div>
         </div>
       </form>
@@ -108,9 +111,12 @@ export default function Notes() {
         <div className="flex flex-wrap gap-1.5">
           <button
             onClick={() => setTagFilter(null)}
-            className={`rounded-lg px-3 py-1 text-xs transition ${
-              tagFilter === null ? 'bg-accent text-page' : 'bg-card text-ink-2'
-            }`}
+            className={cn(
+              'rounded-full px-3 py-1 text-xs font-medium transition-colors duration-150',
+              tagFilter === null
+                ? 'bg-accent text-white'
+                : 'bg-surface text-ink-2 hover:bg-hover hover:text-ink'
+            )}
           >
             全部
           </button>
@@ -118,9 +124,12 @@ export default function Notes() {
             <button
               key={t}
               onClick={() => setTagFilter(tagFilter === t ? null : t)}
-              className={`rounded-lg px-3 py-1 text-xs transition ${
-                tagFilter === t ? 'bg-accent text-page' : 'bg-card text-ink-2'
-              }`}
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium transition-colors duration-150',
+                tagFilter === t
+                  ? 'bg-accent text-white'
+                  : 'bg-surface text-ink-2 hover:bg-hover hover:text-ink'
+              )}
             >
               #{t}
             </button>
@@ -130,46 +139,51 @@ export default function Notes() {
 
       {/* 列表 */}
       {isLoading ? (
-        <p className="py-8 text-center text-sm text-ink-3">加载中…</p>
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-20 w-full" />
+          ))}
+        </div>
       ) : !filtered?.length ? (
-        <p className="py-8 text-center text-sm text-ink-3">
-          {tagFilter ? '该标签下还没有记录。' : '还没有记录，写一条吧。'}
-        </p>
+        <EmptyState
+          icon={<BookOpen size={22} />}
+          title={tagFilter ? '该标签下还没有记录' : '还没有记录'}
+          description={tagFilter ? undefined : '写一条吧。'}
+        />
       ) : (
         <ul className="space-y-2">
           {filtered.map((n) => (
-            <li key={n.id} className="rounded-2xl bg-card p-4 shadow-card">
+            <li
+              key={n.id}
+              className="group rounded-2xl border border-border bg-surface p-4 transition-colors duration-150 hover:bg-hover"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  {n.title && <div className="text-sm font-medium">{n.title}</div>}
-                  <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink-2">{n.body}</p>
+                  {n.title && <div className="text-sm font-medium text-ink">{n.title}</div>}
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink-2">
+                    {n.body}
+                  </p>
                   {n.tags.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {n.tags.map((t) => (
-                        <span key={t} className="rounded-md bg-nested px-2 py-0.5 text-xs text-ink-3">
+                        <Badge key={t} variant="neutral">
                           #{t}
-                        </span>
+                        </Badge>
                       ))}
                     </div>
                   )}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
-                  <span className="text-xs text-ink-3">{n.updated_at.slice(0, 10)}</span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => startEdit(n)}
-                      aria-label="编辑"
-                      className="text-xs text-ink-3 transition hover:text-accent"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      onClick={() => deleteNote.mutate(n.id)}
-                      aria-label="删除"
-                      className="text-xs text-ink-3 transition hover:text-danger"
-                    >
-                      删除
-                    </button>
+                  <span className="text-xs text-ink-3 tabular-nums">{n.updated_at.slice(0, 10)}</span>
+                  <div
+                    className="flex gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                  >
+                    <IconButton size="sm" onClick={() => startEdit(n)} aria-label="编辑">
+                      <Pencil size={15} />
+                    </IconButton>
+                    <IconButton size="sm" onClick={() => deleteNote.mutate(n.id)} aria-label="删除">
+                      <Trash2 size={15} />
+                    </IconButton>
                   </div>
                 </div>
               </div>

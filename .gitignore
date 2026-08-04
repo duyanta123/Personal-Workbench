@@ -8,3 +8,6 @@ dev-dist
 .DS_Store
 npm-debug.log*
 *.tsbuildinfo
+.trae
+astryx-main
+.astryx-cache-test-*

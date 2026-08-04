@@ -1,6 +1,17 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
+import { Check, Plus, Target, Trash2 } from 'lucide-react'
 import { useAddGoal, useDeleteGoal, useGoals, useIncrementGoal } from '../hooks/useGoals'
+import { resolveIcon } from '../utils/icon'
+import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
+import Progress from '../components/ui/Progress'
+import Skeleton from '../components/ui/Skeleton'
+import EmptyState from '../components/ui/EmptyState'
+import PageHeader from '../components/ui/PageHeader'
+import IconButton from '../components/ui/IconButton'
+import IconPicker from '../components/ui/IconPicker'
+import { cn } from '../lib/cn'
 
 export default function Goals() {
   const { data: goals, isLoading } = useGoals()
@@ -9,7 +20,7 @@ export default function Goals() {
   const deleteGoal = useDeleteGoal()
 
   const [name, setName] = useState('')
-  const [emoji, setEmoji] = useState('🎯')
+  const [icon, setIcon] = useState('target')
   const [target, setTarget] = useState('')
   const [unit, setUnit] = useState('')
 
@@ -17,109 +28,125 @@ export default function Goals() {
     e.preventDefault()
     const t = Number(target)
     if (!name.trim() || !t || t <= 0) return
-    addGoal.mutate({ name: name.trim(), emoji: emoji || '🎯', current: 0, target: t, unit: unit.trim() || null })
+    addGoal.mutate({ name: name.trim(), emoji: icon || 'target', current: 0, target: t, unit: unit.trim() || null })
     setName('')
-    setEmoji('🎯')
+    setIcon('target')
     setTarget('')
     setUnit('')
   }
 
-  const inputCls =
-    'rounded-xl border border-ink/15 bg-card px-4 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20'
-
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">长期目标</h1>
+      <PageHeader
+        eyebrow="GOALS"
+        title="长期目标"
+        description="慢慢靠近，稳稳抵达。"
+      />
 
       {/* 添加目标 */}
-      <form onSubmit={handleAdd} className="space-y-3 rounded-2xl bg-card p-4 shadow-card">
+      <form onSubmit={handleAdd} className="space-y-3 rounded-2xl border border-border bg-surface p-4">
         <div className="flex gap-2">
-          <input
-            value={emoji}
-            onChange={(e) => setEmoji(e.target.value)}
-            placeholder="🎯"
-            aria-label="表情"
-            className={`${inputCls} w-16 text-center`}
-          />
-          <input
+          <IconPicker value={icon} onChange={setIcon} aria-label="选择图标" />
+          <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="目标名称，如：读完 24 本书"
-            className={`${inputCls} flex-1`}
+            className="flex-1"
           />
         </div>
         <div className="flex flex-wrap gap-2">
-          <input
+          <Input
             type="number"
             min="1"
             required
             value={target}
             onChange={(e) => setTarget(e.target.value)}
             placeholder="目标数值"
-            className={`${inputCls} w-32`}
+            className="w-32 tabular-nums"
           />
-          <input
+          <Input
             value={unit}
             onChange={(e) => setUnit(e.target.value)}
             placeholder="单位（本/次/公里…）"
-            className={`${inputCls} flex-1 min-w-36`}
+            className="min-w-36 flex-1"
           />
-          <button
-            type="submit"
-            disabled={!name.trim() || !target || Number(target) <= 0}
-            className="rounded-xl bg-accent px-4 text-sm font-medium text-page disabled:opacity-40"
-          >
+          <Button type="submit" disabled={!name.trim() || !target || Number(target) <= 0}>
+            <Plus size={16} />
             创建
-          </button>
+          </Button>
         </div>
       </form>
 
       {/* 目标列表 */}
       {isLoading ? (
-        <p className="py-8 text-center text-sm text-ink-3">加载中…</p>
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 w-full" />
+          ))}
+        </div>
       ) : !goals?.length ? (
-        <p className="py-8 text-center text-sm text-ink-3">还没有目标，创建一个长期目标吧。</p>
+        <EmptyState
+          icon={<Target size={22} />}
+          title="还没有目标"
+          description="创建一个长期目标吧。"
+        />
       ) : (
         <div className="space-y-3">
           {goals.map((g) => {
             const pct = Math.min(100, Math.round((g.current / g.target) * 100))
             const done = g.current >= g.target
+            const Icon = resolveIcon(g.emoji)
             return (
-              <div key={g.id} className="rounded-2xl bg-card p-4 shadow-card">
+              <div
+                key={g.id}
+                className="group rounded-2xl border border-border bg-surface p-4 transition-colors duration-150 hover:bg-hover"
+              >
                 <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-nested text-xl">
-                    {g.emoji}
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-nested">
+                    <Icon size={18} className="text-ink-2" />
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-sm font-medium">{g.name}</span>
-                      <span className={`shrink-0 text-xs ${done ? 'font-medium text-m1' : 'text-ink-3'}`}>
-                        {done ? '已完成 ✓' : `${g.current}/${g.target}${g.unit ?? ''}`}
+                      <span className="truncate text-sm font-medium text-ink">{g.name}</span>
+                      <span
+                        className={cn(
+                          'shrink-0 text-xs tabular-nums',
+                          done ? 'font-medium text-m1' : 'text-ink-3'
+                        )}
+                      >
+                        {done ? (
+                          <span className="inline-flex items-center gap-0.5">
+                            已完成 <Check size={12} />
+                          </span>
+                        ) : (
+                          `${g.current}/${g.target}${g.unit ?? ''}`
+                        )}
                       </span>
                     </div>
-                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-nested">
-                      <div
-                        className={`h-full rounded-full transition-all ${done ? 'bg-m1' : 'bg-m4'}`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
+                    <Progress
+                      value={pct}
+                      color={done ? 'bg-m1' : 'bg-m4'}
+                      className="mt-2"
+                    />
                   </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <button
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="secondary"
                       onClick={() => incrementGoal.mutate(g.id)}
                       disabled={done}
                       aria-label="加一"
-                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-2 text-base font-medium text-accent transition hover:bg-accent hover:text-page disabled:opacity-30"
+                      className="!px-2"
                     >
-                      ＋
-                    </button>
-                    <button
+                      <Plus size={14} />
+                    </Button>
+                    <IconButton
+                      size="sm"
                       onClick={() => deleteGoal.mutate(g.id)}
                       aria-label="删除目标"
-                      className="text-sm text-ink-3 transition hover:text-danger"
                     >
-                      🗑
-                    </button>
+                      <Trash2 size={16} />
+                    </IconButton>
                   </div>
                 </div>
               </div>
