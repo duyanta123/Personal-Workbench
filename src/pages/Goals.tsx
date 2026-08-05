@@ -6,6 +6,7 @@ import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
 import { resolveIcon } from '../utils/icon'
+import { goalRestoreInput } from '../utils/restore'
 import type { Goal } from '../types'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
@@ -34,9 +35,8 @@ export default function Goals() {
   const { requestDelete } = useDeferredDelete<Goal>({
     key: ['goals'],
     label: (g) => g.name,
-    remove: (id) => deleteGoal.mutate(id),
-    restore: (g) =>
-      addGoal.mutate({ name: g.name, emoji: g.emoji, current: g.current, target: g.target, unit: g.unit })
+    remove: (id) => deleteGoal.mutateAsync(id),
+    restore: (g) => addGoal.mutate(goalRestoreInput(g))
   })
 
   function handleAdd(e: FormEvent) {

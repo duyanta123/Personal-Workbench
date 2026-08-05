@@ -23,6 +23,10 @@ export interface NewTodo {
   text: string
   level: Priority
   due_date?: string | null
+  /** 撤销恢复时回填：保留完成态 / 置顶 / 排序 */
+  done?: boolean
+  pinned?: boolean
+  sort_order?: number
 }
 
 export function useAddTodo() {
@@ -31,7 +35,13 @@ export function useAddTodo() {
     mutationFn: async (input: NewTodo) => {
       const { data, error } = await supabase!
         .from('todos')
-        .insert({ ...input, due_date: input.due_date ?? null, sort_order: Date.now() })
+        .insert({
+          ...input,
+          due_date: input.due_date ?? null,
+          done: input.done ?? false,
+          pinned: input.pinned ?? false,
+          sort_order: input.sort_order ?? Date.now()
+        })
         .select()
         .single()
       if (error) throw error

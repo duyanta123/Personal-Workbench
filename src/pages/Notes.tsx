@@ -6,6 +6,9 @@ import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
 import { searchBy } from '../utils/search'
+import { createdTodayCount } from '../utils/notesStats'
+import { todayStr } from '../utils/date'
+import { noteRestoreInput } from '../utils/restore'
 import type { Note, NoteLayout } from '../types'
 import Button from '../components/ui/Button'
 import Input, { Textarea } from '../components/ui/Input'
@@ -62,14 +65,14 @@ export default function Notes() {
   // 置顶在前，其余按更新时间倒序（服务端已按 updated_at 倒序）
   const sorted = useMemo(() => [...filtered].sort((a, b) => Number(b.pinned) - Number(a.pinned)), [filtered])
 
-  const today = new Date().toISOString().slice(0, 10)
-  const todayCount = (notes ?? []).filter((n) => n.created_at.slice(0, 10) === today).length
+  // 今日新增：按本地日期统计（避免 UTC 凌晨串日）
+  const todayCount = createdTodayCount(notes ?? [], todayStr())
 
   const { requestDelete } = useDeferredDelete<Note>({
     key: ['notes'],
     label: (n) => n.title ?? '笔记',
-    remove: (id) => deleteNote.mutate(id),
-    restore: (n) => addNote.mutate({ title: n.title, body: n.body, tags: n.tags, pinned: n.pinned })
+    remove: (id) => deleteNote.mutateAsync(id),
+    restore: (n) => addNote.mutate(noteRestoreInput(n))
   })
 
   function reset() {

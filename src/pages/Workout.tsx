@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Dumbbell, Plus, Trash2 } from 'lucide-react'
 import {
   useAddWorkoutExercise,
+  useAddWorkoutExercises,
   useAddWorkoutSession,
   useBodyMetrics,
   useDeleteWorkoutExercise,
@@ -96,10 +97,13 @@ export default function Workout() {
   const addSession = useAddWorkoutSession()
   const deleteSession = useDeleteWorkoutSession()
   const addExercise = useAddWorkoutExercise()
+  const addExercises = useAddWorkoutExercises()
   const deleteExercise = useDeleteWorkoutExercise()
   const upsertMetric = useUpsertBodyMetric()
   const push = useToastStore((s) => s.push)
   const touch = useTouch()
+  // 删除训练时快照其动作明细，撤销时重建
+  const exSnapshot = useRef(new Map<string, WorkoutExercise[]>())
 
   // 新增训练表单
   const [sForm, setSForm] = useState({ date: todayStr(), body_part: 'chest' as string, duration: '' })
@@ -127,14 +131,39 @@ export default function Workout() {
   const { requestDelete: requestDeleteSession } = useDeferredDelete<WorkoutSession>({
     key: ['workouts'],
     label: (s) => `${s.date} 训练`,
-    remove: (id) => deleteSession.mutate(id),
-    restore: (s) => addSession.mutate({ date: s.date, body_part: s.body_part, duration_min: s.duration_min, note: s.note })
+    remove: (id) => {
+      // 级联删除前快照该训练的动作明细，撤销时按新 session id 重建
+      exSnapshot.current.set(id, bySession.get(id) ?? [])
+      return deleteSession.mutateAsync(id)
+    },
+    restore: async (s) => {
+      const added = await addSession.mutateAsync({
+        date: s.date,
+        body_part: s.body_part,
+        duration_min: s.duration_min,
+        note: s.note
+      })
+      const exs = exSnapshot.current.get(s.id) ?? []
+      exSnapshot.current.delete(s.id)
+      if (exs.length > 0) {
+        await addExercises.mutateAsync(
+          exs.map((e) => ({
+            session_id: added.id,
+            name: e.name,
+            sets: e.sets,
+            reps: e.reps,
+            weight: e.weight,
+            note: e.note
+          }))
+        )
+      }
+    }
   })
 
   const { requestDelete: requestDeleteExercise } = useDeferredDelete<WorkoutExercise>({
     key: ['workout-exercises'],
     label: (e) => e.name,
-    remove: (id) => deleteExercise.mutate(id),
+    remove: (id) => deleteExercise.mutateAsync(id),
     restore: (e) => addExercise.mutate({ session_id: e.session_id, name: e.name, sets: e.sets, reps: e.reps, weight: e.weight, note: e.note })
   })
 

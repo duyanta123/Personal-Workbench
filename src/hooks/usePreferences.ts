@@ -1,10 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import type { UserPreferences } from '../types'
+import type { PomodoroPrefs, UserPreferences } from '../types'
 
 export const prefsKey = ['prefs']
 
 export const DEFAULT_CATEGORIES: UserPreferences['categories'] = { expense: [], income: [] }
+
+/** 番茄钟默认偏好：25 专注 / 5 短休 / 15 长休 / 4 轮长休阈值 */
+export const DEFAULT_POMODORO: PomodoroPrefs = {
+  focus: 25,
+  break: 5,
+  long_break: 15,
+  rounds_per_cycle: 4
+}
 
 export function usePreferences() {
   return useQuery({
@@ -21,6 +29,7 @@ export function usePreferences() {
 interface PrefsPatch {
   categories?: UserPreferences['categories']
   monthly_budget?: number | null
+  pomodoro?: PomodoroPrefs
 }
 
 /** 新增/更新偏好（upsert，缺省字段保持现状） */
@@ -32,7 +41,8 @@ export function useUpdatePreferences() {
       const payload: PrefsPatch = {
         categories: patch.categories ?? current?.categories ?? DEFAULT_CATEGORIES,
         monthly_budget:
-          patch.monthly_budget !== undefined ? patch.monthly_budget : (current?.monthly_budget ?? null)
+          patch.monthly_budget !== undefined ? patch.monthly_budget : (current?.monthly_budget ?? null),
+        pomodoro: patch.pomodoro ?? current?.pomodoro ?? DEFAULT_POMODORO
       }
       const { data, error } = await supabase!
         .from('user_preferences')

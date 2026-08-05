@@ -7,10 +7,12 @@ import {
   useProblems,
   useUpdateProblem
 } from '../hooks/useProblems'
+import type { NewProblem } from '../hooks/useProblems'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
 import { monthPrefix, todayStr } from '../utils/date'
+import { practiceRestoreInput } from '../utils/restore'
 import { buildMonthGrid } from '../utils/calendar'
 import {
   buildHeatmap,
@@ -144,17 +146,8 @@ export default function Practice() {
   const { requestDelete } = useDeferredDelete<PracticeProblem>({
     key: ['problems'],
     label: (p) => p.title,
-    remove: (id) => deleteProblem.mutate(id),
-    restore: (p) =>
-      addProblem.mutate({
-        title: p.title,
-        platform: p.platform,
-        difficulty: p.difficulty,
-        status: p.status,
-        tags: p.tags,
-        url: p.url,
-        note: p.note
-      })
+    remove: (id) => deleteProblem.mutateAsync(id),
+    restore: (p) => addProblem.mutate(practiceRestoreInput(p))
   })
 
   function reset() {
@@ -166,7 +159,7 @@ export default function Practice() {
     e.preventDefault()
     const title = form.title.trim()
     if (!title) return
-    const payload = {
+    const payload: NewProblem = {
       title,
       platform: form.platform,
       difficulty: form.difficulty,
@@ -176,7 +169,8 @@ export default function Practice() {
         .map((t) => t.trim())
         .filter(Boolean),
       url: form.url.trim() || null,
-      note: null
+      // 仅新增时写入空 note；编辑时保留已有 note
+      note: editingId ? undefined : null
     }
     if (editingId) {
       updateProblem.mutate({ id: editingId, patch: payload })

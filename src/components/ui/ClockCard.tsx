@@ -30,7 +30,7 @@ export default function ClockCard() {
   return (
     <div
       className="relative flex min-h-44 flex-col justify-between overflow-hidden rounded-2xl p-5 shadow-card"
-      style={{ background: 'linear-gradient(140deg,#4a443c 0%,#2e2a24 60%,#201d18 100%)', color: '#f5f0e8' }}
+      style={{ background: 'var(--grad-dark)', color: 'var(--ink-on-dark)' }}
     >
       <div className="pointer-events-none absolute -right-10 -top-12 h-44 w-44 rounded-full bg-accent/25 blur-2xl" />
       <div className="pointer-events-none absolute -bottom-14 -left-10 h-40 w-40 rounded-full bg-m1/20 blur-2xl" />

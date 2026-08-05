@@ -36,12 +36,25 @@ export function useHabitLogs() {
 export function useAddHabit() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { name: string; emoji: string }) => {
+    mutationFn: async (input: { name: string; emoji: string; pinned?: boolean }) => {
       const { data, error } = await supabase!.from('habits').insert(input).select().single()
       if (error) throw error
       return data as Habit
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: habitsKey })
+  })
+}
+
+/** 批量写入打卡记录（撤销删除习惯时重建历史用） */
+export function useAddHabitLogs() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (rows: { habit_id: string; log_date: string }[]) => {
+      if (rows.length === 0) return
+      const { error } = await supabase!.from('habit_logs').insert(rows)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: habitLogsKey })
   })
 }
 

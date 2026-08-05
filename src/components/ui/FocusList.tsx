@@ -56,13 +56,13 @@ export default function FocusList({ todos, habits, logs, goals }: FocusListProps
               onClick={() => toggleTodo.mutate({ id: t.id, done: !t.done })}
               aria-label={t.done ? '恢复未完成' : '切换完成'}
               className={cn(
-                'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-150',
+                'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-150',
                 t.done
                   ? 'border-m1 bg-m1 text-white'
                   : 'border-ink-3 text-transparent hover:border-accent'
               )}
             >
-              <Check size={11} strokeWidth={3} />
+              <Check size={13} strokeWidth={3} />
             </button>
             <button
               onClick={() => navigate('/todos')}
@@ -83,13 +83,13 @@ export default function FocusList({ todos, habits, logs, goals }: FocusListProps
                 onClick={() => toggleHabit.mutate(h.id)}
                 aria-label={on ? '取消今日打卡' : '今日打卡'}
                 className={cn(
-                  'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-150',
+                  'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-150',
                   on
                     ? 'border-m2 bg-m2 text-white'
                     : 'border-ink-3 text-transparent hover:border-accent'
                 )}
               >
-                <Check size={11} strokeWidth={3} />
+                <Check size={13} strokeWidth={3} />
               </button>
               <button
                 onClick={() => navigate('/checkins')}
@@ -119,7 +119,7 @@ export default function FocusList({ todos, habits, logs, goals }: FocusListProps
               <button
                 onClick={() => incGoal.mutate(g.id)}
                 aria-label="进度 +1"
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border text-sm text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border text-sm text-ink-2 transition-colors hover:bg-hover hover:text-ink"
               >
                 +
               </button>

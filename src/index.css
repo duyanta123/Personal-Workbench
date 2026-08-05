@@ -12,7 +12,7 @@
   --nested: #f2eee7;
   --ink: #15110c;
   --ink-2: #4e606f;
-  --ink-3: #a4b0bc;
+  --ink-3: #667085;
 
   /* 主操作色 */
   --accent: #225bff;
@@ -26,6 +26,17 @@
   --m4: #6e6155; /* 暖棕 */
   --m5: #524740; /* 墨蓝 */
   --danger: #e3193b;
+
+  /* 图表扩展色（m1-m5 之后的环形/条形配色） */
+  --m6: #8aa394;
+  --m7: #7a8da3;
+  --m8: #c4a572;
+  --m9: #b8837a;
+
+  /* 深色签名卡 */
+  --ink-on-dark: #f5f0e8;
+  --grad-dark: linear-gradient(140deg, #4a443c 0%, #2e2a24 60%, #201d18 100%);
+  --grad-dark-warm: linear-gradient(150deg, #4a3828 0%, #3a2a1a 62%, #2a1a0a 100%);
 
   /* 边框与交互层 */
   --border: rgba(5, 54, 89, 0.1);
@@ -44,7 +55,7 @@
   --nested: #1a1a1d;
   --ink: #dfe2e5;
   --ink-2: #aaafb5;
-  --ink-3: #6f747c;
+  --ink-3: #8a919c;
 
   --accent: #3d87ff;
   --accent-hover: #5b9cff;
@@ -56,6 +67,12 @@
   --m4: #b8a47f;
   --m5: #5b85ff;
   --danger: #f5394f;
+
+  /* 图表扩展色（暗色主题） */
+  --m6: #8fbfa1;
+  --m7: #93b2d8;
+  --m8: #e2c78f;
+  --m9: #d9a89e;
 
   --border: rgba(242, 244, 246, 0.1);
   --hover: rgba(223, 226, 229, 0.08);
@@ -82,6 +99,10 @@
   --color-m3: var(--m3);
   --color-m4: var(--m4);
   --color-m5: var(--m5);
+  --color-m6: var(--m6);
+  --color-m7: var(--m7);
+  --color-m8: var(--m8);
+  --color-m9: var(--m9);
   --color-danger: var(--danger);
   --color-border: var(--border);
   --color-hover: var(--hover);
@@ -100,6 +121,23 @@
     background: var(--page);
     color: var(--ink);
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* 统一键盘焦点环（WCAG 2.4.7） */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* 尊重系统减弱动效偏好 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 
   /* 简易滚动条 */

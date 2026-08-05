@@ -6,7 +6,7 @@ import { useLedgerEntries } from '../../hooks/useLedger'
 import { useHabits, useHabitLogs } from '../../hooks/useHabits'
 import { useGoals } from '../../hooks/useGoals'
 import { useProblems } from '../../hooks/useProblems'
-import { useBodyMetrics, useWorkoutSessions } from '../../hooks/useWorkouts'
+import { useBodyMetrics, useWorkoutExercises, useWorkoutSessions } from '../../hooks/useWorkouts'
 import { useImportData } from '../../hooks/useImportData'
 import { useToastStore } from '../../stores/toast'
 import { buildCSV, buildJSON, downloadFile } from '../../utils/export'
@@ -28,6 +28,7 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
   const notes = useNotes()
   const problems = useProblems()
   const workoutSessions = useWorkoutSessions()
+  const workoutExercises = useWorkoutExercises()
   const metrics = useBodyMetrics()
   const importData = useImportData()
   const push = useToastStore((s) => s.push)
@@ -42,6 +43,7 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
     notes.data &&
     problems.data &&
     workoutSessions.data &&
+    workoutExercises.data &&
     metrics.data
 
   function exportJSON() {
@@ -54,6 +56,7 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
       notes: notes.data,
       practice_problems: problems.data,
       workout_sessions: workoutSessions.data,
+      workout_exercises: workoutExercises.data,
       body_metrics: metrics.data
     }
     downloadFile(`工作台备份-${stamp()}.json`, buildJSON(payload), 'application/json')
@@ -98,9 +101,20 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
       try {
         const payload = JSON.parse(String(reader.result)) as BackupData
         if (!payload || typeof payload !== 'object') throw new Error('格式错误')
-        const tables = (['todos', 'habits', 'habit_logs', 'ledger_entries', 'goals', 'notes'] as const).filter(
-          (t) => Array.isArray(payload[t]) && payload[t]!.length > 0
-        )
+        const tables = (
+          [
+            'todos',
+            'habits',
+            'habit_logs',
+            'ledger_entries',
+            'goals',
+            'notes',
+            'practice_problems',
+            'workout_sessions',
+            'workout_exercises',
+            'body_metrics'
+          ] as const
+        ).filter((t) => Array.isArray(payload[t]) && payload[t]!.length > 0)
         if (tables.length === 0) throw new Error('没有可导入的数据')
         importData.mutate(payload, {
           onSuccess: (counts) => {

@@ -103,6 +103,19 @@ export function useAddWorkoutExercise() {
   })
 }
 
+/** 批量写入动作明细（撤销删除训练时重建动作用） */
+export function useAddWorkoutExercises() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (rows: NewWorkoutExercise[]) => {
+      if (rows.length === 0) return
+      const { error } = await supabase!.from('workout_exercises').insert(rows)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: exercisesKey })
+  })
+}
+
 export function useDeleteWorkoutExercise() {
   const qc = useQueryClient()
   return useMutation({

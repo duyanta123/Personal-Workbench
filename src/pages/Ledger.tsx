@@ -99,7 +99,7 @@ export default function Ledger() {
   const { requestDelete } = useDeferredDelete<LedgerEntry>({
     key: ['ledger_entries'],
     label: (e) => `${e.category} ${e.amount}`,
-    remove: (id) => deleteEntry.mutate(id),
+    remove: (id) => deleteEntry.mutateAsync(id),
     restore: (e) =>
       addEntry.mutate({
         kind: e.kind,

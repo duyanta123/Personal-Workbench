@@ -33,8 +33,11 @@ export default function HabitWeekTable({ habits, logs }: HabitWeekTableProps) {
     return (
       <div className="rounded-2xl border border-border bg-surface p-5">
         <div className="flex items-center gap-2">
-          <Flame size={14} className="text-ink-3" />
-          <h3 className="text-xs font-bold text-ink">本周习惯追踪</h3>
+          <Flame size={15} className="text-ink-3" />
+          <div>
+            <div className="text-[9.5px] font-extrabold uppercase tracking-[0.14em] text-ink-3">Habit Tracker</div>
+            <div className="text-sm font-extrabold text-ink">本周习惯追踪</div>
+          </div>
           <span className="ml-auto text-xs text-ink-3">{weekEndLabel}</span>
         </div>
         <p className="mt-6 text-center text-xs text-ink-3">还没有习惯，去「习惯打卡」添加吧</p>
@@ -45,8 +48,8 @@ export default function HabitWeekTable({ habits, logs }: HabitWeekTableProps) {
   return (
     <div className="rounded-2xl border border-border bg-surface p-5">
       <div className="mb-3 flex items-center gap-2">
-        <Flame size={14} className="text-ink-3" />
-        <h3 className="text-xs font-bold text-ink">本周习惯追踪</h3>
+        <Flame size={15} className="text-ink-3" />
+        <div className="text-sm font-extrabold text-ink">本周习惯追踪</div>
         <span className="ml-auto text-xs text-ink-3">本周 · {weekEndLabel}</span>
       </div>
       <div className="overflow-x-auto">

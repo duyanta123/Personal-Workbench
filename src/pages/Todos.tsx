@@ -24,6 +24,7 @@ import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
 import { dateStr, todayStr } from '../utils/date'
 import { reorder } from '../utils/reorder'
+import { todoRestoreInput } from '../utils/restore'
 import type { Priority, Todo } from '../types'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
@@ -106,8 +107,8 @@ export default function Todos() {
   const { requestDelete } = useDeferredDelete<Todo>({
     key: ['todos'],
     label: (t) => t.text,
-    remove: (id) => deleteTodo.mutate(id),
-    restore: (t) => addTodo.mutate({ text: t.text, level: t.level, due_date: t.due_date })
+    remove: (id) => deleteTodo.mutateAsync(id),
+    restore: (t) => addTodo.mutate(todoRestoreInput(t))
   })
 
   function persistOrder(list: Todo[]) {

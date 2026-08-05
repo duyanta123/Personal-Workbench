@@ -79,10 +79,20 @@ export interface PomodoroSession {
   created_at: string
 }
 
+/** 番茄钟偏好（分钟） */
+export interface PomodoroPrefs {
+  focus: number
+  break: number
+  long_break: number
+  /** 连续专注多少轮后进入长休息 */
+  rounds_per_cycle: number
+}
+
 export interface UserPreferences {
   user_id: string
   categories: { expense: string[]; income: string[] }
   monthly_budget: number | null
+  pomodoro: PomodoroPrefs
   updated_at: string
 }
 

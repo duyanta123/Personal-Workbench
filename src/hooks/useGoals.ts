@@ -28,6 +28,7 @@ export function useAddGoal() {
       current: number
       target: number
       unit: string | null
+      pinned?: boolean
     }) => {
       const { data, error } = await supabase!.from('goals').insert(input).select().single()
       if (error) throw error

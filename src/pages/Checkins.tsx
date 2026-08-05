@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Check, Flame, Pin, PinOff, Plus, Search, Trash2 } from 'lucide-react'
 import {
   useAddHabit,
+  useAddHabitLogs,
   useDeleteHabit,
   useHabitLogs,
   useHabits,
@@ -16,6 +17,7 @@ import { monthPrefix, todayStr } from '../utils/date'
 import { buildMonthGrid, monthCompletion } from '../utils/calendar'
 import { computeStreak } from '../utils/streak'
 import { resolveIcon } from '../utils/icon'
+import { habitRestoreInput } from '../utils/restore'
 import type { Habit } from '../types'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
@@ -49,8 +51,11 @@ export default function Checkins() {
   const togglePin = useToggleHabitPin()
   const addHabit = useAddHabit()
   const deleteHabit = useDeleteHabit()
+  const addHabitLogs = useAddHabitLogs()
   const push = useToastStore((s) => s.push)
   const touch = useTouch()
+  // 删除时快照该习惯的打卡日期，撤销时按新习惯 id 重建（级联删除的日志无法自动恢复）
+  const logsSnapshot = useRef(new Map<string, string[]>())
 
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('flame')
@@ -101,8 +106,18 @@ export default function Checkins() {
   const { requestDelete } = useDeferredDelete<Habit>({
     key: ['habits'],
     label: (h) => h.name,
-    remove: (id) => deleteHabit.mutate(id),
-    restore: (h) => addHabit.mutate({ name: h.name, emoji: h.emoji })
+    remove: (id) => {
+      logsSnapshot.current.set(id, [...(byHabit.get(id) ?? [])])
+      return deleteHabit.mutateAsync(id)
+    },
+    restore: async (h) => {
+      const added = await addHabit.mutateAsync(habitRestoreInput(h))
+      const dates = logsSnapshot.current.get(h.id) ?? []
+      logsSnapshot.current.delete(h.id)
+      if (dates.length > 0) {
+        await addHabitLogs.mutateAsync(dates.map((d) => ({ habit_id: added.id, log_date: d })))
+      }
+    }
   })
 
   function toggleToday(h: Habit) {
