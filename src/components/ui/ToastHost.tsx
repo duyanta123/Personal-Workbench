@@ -28,7 +28,8 @@ export default function ToastHost() {
         return (
           <div
             key={t.id}
-            role="status"
+            role={t.kind === 'error' ? 'alert' : 'status'}
+            aria-live={t.kind === 'error' ? 'assertive' : 'polite'}
             className="pointer-events-auto flex w-full max-w-sm animate-[toast-in_0.2s_ease-out] items-center gap-2.5 rounded-2xl border border-border bg-surface px-4 py-3 shadow-overlay"
           >
             <Icon size={18} className={`shrink-0 ${KIND_COLOR[t.kind]}`} />

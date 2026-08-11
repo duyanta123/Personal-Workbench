@@ -1,26 +1,74 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { enqueueOperation } from '../lib/outbox'
+import { afterCursor, cursorScope, cursorToken, getPageCursor, rememberPageCursor } from '../lib/cursorPagination'
 import type { Goal } from '../types'
+import { useAuth } from './useAuth'
 
-export const goalsKey = ['goals']
+export const goalsKey = (userId: string | null) => ['goals', userId] as const
+export const GOALS_PAGE_SIZE = 50
+const goalsCursorScope = (userId: string | null) => cursorScope(['goals', userId])
+const goalsOrder = [
+  { column: 'pinned', direction: 'desc' as const },
+  { column: 'created_at', direction: 'asc' as const },
+  { column: 'id', direction: 'asc' as const }
+] as const
+export const goalsListKey = (userId: string | null, page: number) => [
+  ...goalsKey(userId), 'page', page, cursorToken(getPageCursor(goalsCursorScope(userId), page))
+] as const
 
-export function useGoals() {
+export interface GoalPage {
+  items: Goal[]
+  total: number
+}
+
+function linkedGoalKeys(userId: string | null) {
+  return [
+    goalsKey(userId),
+    ['focus_items', userId] as const,
+    ['dashboard_summary', userId] as const,
+    ['workbench_insights', userId] as const
+  ]
+}
+
+export function useGoals(page = 0) {
+  const { userId } = useAuth()
+  const scope = goalsCursorScope(userId)
+  const cursor = getPageCursor(scope, page)
   return useQuery({
-    queryKey: goalsKey,
+    queryKey: goalsListKey(userId, page),
     queryFn: async () => {
-      const { data, error } = await supabase!
+      let request = supabase!
         .from('goals')
         .select('*')
+        .order('pinned', { ascending: false })
         .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+      if (cursor) request = request.or(afterCursor(cursor, goalsOrder))
+      const [rowsResult, countResult] = await Promise.all([
+        request.limit(GOALS_PAGE_SIZE),
+        supabase!.from('goals').select('id', { count: 'exact', head: true })
+      ])
+      const { data, error } = rowsResult
+      const { count, error: countError } = countResult
       if (error) throw error
-      return data as Goal[]
+      if (countError) throw countError
+      const items = (data ?? []) as Goal[]
+      const last = items.at(-1)
+      rememberPageCursor(scope, page + 1, last ? {
+        pinned: last.pinned,
+        created_at: last.created_at,
+        id: last.id
+      } : null)
+      return { items, total: count ?? 0 } as GoalPage
     },
-    enabled: !!supabase
+    enabled: !!supabase && !!userId
   })
 }
 
 export function useAddGoal() {
   const qc = useQueryClient()
+  const { userId } = useAuth()
   return useMutation({
     mutationFn: async (input: {
       name: string
@@ -28,46 +76,70 @@ export function useAddGoal() {
       current: number
       target: number
       unit: string | null
+      note?: string | null
       pinned?: boolean
     }) => {
-      const { data, error } = await supabase!.from('goals').insert(input).select().single()
-      if (error) throw error
-      return data as Goal
+      if (!userId) throw new Error('未登录')
+      return enqueueOperation<Goal>(userId, 'goal.create', input)
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey })
+    onSuccess: () => linkedGoalKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
 }
 
 export function useIncrementGoal() {
+  const adjust = useAdjustGoal()
+  return {
+    ...adjust,
+    mutate: (id: string) => adjust.mutate({ id, delta: 1 }),
+    mutateAsync: (id: string) => adjust.mutateAsync({ id, delta: 1 })
+  }
+}
+
+export function useAdjustGoal() {
   const qc = useQueryClient()
+  const { userId } = useAuth()
   return useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase!.rpc('increment_goal', { goal_id: id })
+    mutationFn: async ({ id, delta }: { id: string; delta: number }) => {
+      if (!userId) throw new Error('未登录')
+      return enqueueOperation<Goal>(userId, 'goal.adjust', { goal_id: id, delta })
+    },
+    onSuccess: () => linkedGoalKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
+  })
+}
+
+export function useUpdateGoal() {
+  const qc = useQueryClient()
+  const { userId } = useAuth()
+  return useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Pick<Goal, 'name' | 'emoji' | 'current' | 'target' | 'unit' | 'note' | 'pinned'>> }) => {
+      const { error } = await supabase!.from('goals').update(patch).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey })
+    onSuccess: () => linkedGoalKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
 }
 
 export function useDeleteGoal() {
   const qc = useQueryClient()
+  const { userId } = useAuth()
   return useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase!.from('goals').delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey })
+    onSuccess: () => linkedGoalKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
 }
 
 /** 切换置顶 */
 export function useToggleGoalPin() {
   const qc = useQueryClient()
+  const { userId } = useAuth()
   return useMutation({
     mutationFn: async ({ id, pinned }: { id: string; pinned: boolean }) => {
       const { error } = await supabase!.from('goals').update({ pinned }).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: goalsKey })
+    onSuccess: () => linkedGoalKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
 }

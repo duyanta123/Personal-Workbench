@@ -1,56 +1,119 @@
+import { useSyncExternalStore } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useToastStore } from '../stores/toast'
 
-interface Options<T extends { id: string }> {
-  /** 缓存 queryKey，用于乐观移除/回滚 */
+interface CacheAdapter<T extends { id: string }, C> {
+  getItems: (cache: C | undefined) => T[]
+  remove: (cache: C | undefined, id: string) => C | undefined
+  restore: (cache: C | undefined, item: T, index: number) => C | undefined
+}
+
+interface Options<T extends { id: string }, C = T[]> {
   key: readonly unknown[]
-  /** 提示文案用：如何称呼被删项 */
   label: (item: T) => string
-  /** 实际删除；返回 Promise 时在失败后自动回滚缓存并提示（页面请用 mutateAsync） */
-  remove: (id: string) => void | Promise<unknown>
-  /** 撤销：重新写回 */
-  restore: (item: T) => void
-  /** 撤销窗口毫秒数 */
+  remove: (id: string) => Promise<unknown>
+  cache?: CacheAdapter<T, C>
   duration?: number
 }
 
-/**
- * 删除 + 撤销：点击删除立即乐观移除并调删除接口，
- * 弹 toast 提供 5 秒撤销窗口，撤销时重新插入数据（Gmail 式）。
- * 删除失败时：撤销窗口作废、恢复缓存中的该项（保留原位置）、弹出错误提示，
- * 避免「界面已删、库里还在」的数据不一致。
- */
-export function useDeferredDelete<T extends { id: string }>(opts: Options<T>) {
-  const qc = useQueryClient()
-  const push = useToastStore((s) => s.push)
-  const duration = opts.duration ?? 5000
+interface PendingDelete {
+  timer: ReturnType<typeof setTimeout>
+  deadline: number
+  toastId: number
+  cancel: () => void
+}
 
-  function requestDelete(item: T) {
-    const id = item.id
-    const prev = qc.getQueryData<T[]>(opts.key)
-    qc.setQueryData<T[]>(opts.key, (old) => old?.filter((x) => x.id !== id))
-    const toastId = push({
-      kind: 'info',
-      message: `已删除「${opts.label(item)}」`,
-      actionLabel: '撤销',
-      duration,
-      onAction: () => {
-        qc.setQueryData<T[]>(opts.key, (old) => (old ? [item, ...old] : [item]))
-        opts.restore(item)
-      }
-    })
-    Promise.resolve(opts.remove(id)).catch(() => {
-      // 删除失败：撤销无意义（数据仍在），作废旧窗口并回滚该项到原位置
-      useToastStore.getState().dismiss(toastId)
-      qc.setQueryData<T[]>(opts.key, (old) => {
-        const list = old ?? []
-        if (list.some((x) => x.id === id)) return list
-        const insertAt = Math.min(prev?.findIndex((x) => x.id === id) ?? list.length, list.length)
-        return [...list.slice(0, insertAt), item, ...list.slice(insertAt)]
-      })
-      push({ kind: 'error', message: `删除「${opts.label(item)}」失败，请检查网络后重试` })
-    })
+const pendingDeletes = new Map<string, PendingDelete>()
+const listeners = new Set<() => void>()
+let version = 0
+let ticker: ReturnType<typeof setInterval> | null = null
+
+function emit() {
+  version++
+  for (const listener of listeners) listener()
+  if (pendingDeletes.size > 0 && ticker === null) {
+    ticker = setInterval(() => emit(), 1000)
+  } else if (pendingDeletes.size === 0 && ticker !== null) {
+    clearInterval(ticker)
+    ticker = null
+  }
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+export function cancelAllPendingDeletes() {
+  for (const pending of pendingDeletes.values()) {
+    clearTimeout(pending.timer)
+    useToastStore.getState().dismiss(pending.toastId)
+  }
+  pendingDeletes.clear()
+  emit()
+}
+
+/**
+ * Deletion with undo. The row deliberately remains in the query cache during
+ * the undo window; consumers use isPending/remainingSeconds to mark and lock it.
+ */
+export function useDeferredDelete<T extends { id: string }, C = T[]>(opts: Options<T, C>) {
+  const qc = useQueryClient()
+  const push = useToastStore((state) => state.push)
+  useSyncExternalStore(subscribe, () => version, () => 0)
+  const duration = opts.duration ?? 5000
+  const scope = JSON.stringify(opts.key)
+  const cache = opts.cache ?? {
+    getItems: (value: T[] | undefined) => value ?? [],
+    remove: (value: T[] | undefined, id: string) => value?.filter((item) => item.id !== id),
+    restore: (value: T[] | undefined) => value
+  } as CacheAdapter<T, C>
+
+  function pendingKey(id: string) {
+    return `${scope}:${id}`
   }
 
-  return { requestDelete }
+  function requestDelete(item: T) {
+    const key = pendingKey(item.id)
+    if (pendingDeletes.has(key)) return
+    const deadline = Date.now() + duration
+    let toastId = 0
+    const cancel = () => {
+      const pending = pendingDeletes.get(key)
+      if (!pending) return
+      clearTimeout(pending.timer)
+      pendingDeletes.delete(key)
+      emit()
+    }
+    toastId = push({
+      kind: 'info',
+      message: `「${opts.label(item)}」将在 ${Math.ceil(duration / 1000)} 秒后删除`,
+      actionLabel: '撤销',
+      duration,
+      onAction: cancel
+    })
+    const timer = setTimeout(async () => {
+      try {
+        await opts.remove(item.id)
+        qc.setQueryData<C>(opts.key, (old) => cache.remove(old, item.id))
+        await qc.invalidateQueries({ queryKey: opts.key })
+      } catch {
+        useToastStore.getState().dismiss(toastId)
+        push({ kind: 'error', message: `删除「${opts.label(item)}」失败，请检查网络后重试` })
+      } finally {
+        pendingDeletes.delete(key)
+        emit()
+      }
+    }, duration)
+    pendingDeletes.set(key, { timer, deadline, toastId, cancel })
+    emit()
+  }
+
+  const isPending = (id: string) => pendingDeletes.has(pendingKey(id))
+  const remainingSeconds = (id: string) => {
+    const pending = pendingDeletes.get(pendingKey(id))
+    return pending ? Math.max(0, Math.ceil((pending.deadline - Date.now()) / 1000)) : 0
+  }
+
+  return { requestDelete, isPending, remainingSeconds }
 }

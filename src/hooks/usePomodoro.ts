@@ -1,40 +1,48 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { todayStr } from '../utils/date'
-import type { PomodoroSession } from '../types'
+import { enqueueOperation } from '../lib/outbox'
+import { useAuth } from './useAuth'
+import { useCurrentDate } from './useCurrentDate'
 
-export const pomodoroKey = ['pomodoro_sessions']
+export const pomodoroKey = (userId: string | null) => ['pomodoro_sessions', userId] as const
 
 /** 当日番茄钟累计（count 轮数 / minutes 专注分钟） */
-export function usePomodoroStats() {
+export interface PomodoroStats {
+  count: number
+  minutes: number
+}
+
+export function usePomodoroStats(date?: string) {
+  const { userId } = useAuth()
+  const currentDate = useCurrentDate()
+  const today = date ?? currentDate
   return useQuery({
-    queryKey: [...pomodoroKey, todayStr()],
+    queryKey: [...pomodoroKey(userId), today],
     queryFn: async () => {
       const { data, error } = await supabase!
         .from('pomodoro_sessions')
         .select('*')
-        .eq('date', todayStr())
+        .eq('date', today)
         .maybeSingle()
       if (error) throw error
-      return (data as PomodoroSession | null) ?? { count: 0, minutes: 0 }
+      return (data as PomodoroStats | null) ?? { count: 0, minutes: 0 }
     },
-    enabled: !!supabase
+    enabled: !!supabase && !!userId
   })
 }
 
-/** 写入当日番茄钟累计（按 user_id + date upsert） */
-export function useSavePomodoro() {
+/** 原子累计完成的一轮专注，避免读改写竞争。 */
+export function useCompletePomodoro() {
   const qc = useQueryClient()
+  const { userId } = useAuth()
   return useMutation({
-    mutationFn: async (input: { count: number; minutes: number }) => {
-      const { error } = await supabase!
-        .from('pomodoro_sessions')
-        .upsert(
-          { date: todayStr(), count: input.count, minutes: input.minutes },
-          { onConflict: 'user_id,date' }
-        )
-      if (error) throw error
+    mutationFn: async (input: { date: string; minutes: number; operationId: string }) => {
+      if (!userId) throw new Error('未登录')
+      return enqueueOperation(userId, 'pomodoro.complete', {
+        date: input.date,
+        minutes: input.minutes
+      }, input.operationId)
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: pomodoroKey })
+    onSuccess: () => qc.invalidateQueries({ queryKey: pomodoroKey(userId) })
   })
 }

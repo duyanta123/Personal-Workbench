@@ -1,7 +1,8 @@
 /** CSV 单元格转义：逗号 / 引号 / 换行 */
 function escapeCell(v: string | number | null | undefined): string {
   if (v === null || v === undefined) return ''
-  const s = String(v)
+  const raw = String(v)
+  const s = typeof v === 'string' && /^[\s]*[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 

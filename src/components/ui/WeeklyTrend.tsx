@@ -13,7 +13,7 @@ interface WeeklyTrendProps {
 }
 
 /** 近 7 天折线 + 面积趋势图 */
-export default function WeeklyTrend({ series, unit = '次', title = '本周打卡趋势' }: WeeklyTrendProps) {
+export default function WeeklyTrend({ series, unit = '次', title = '近 7 天打卡趋势' }: WeeklyTrendProps) {
   const gid = useId()
   const n = series.length
   const w = 600
@@ -45,11 +45,11 @@ export default function WeeklyTrend({ series, unit = '次', title = '本周打�
       </div>
       {!has ? (
         <div className="flex h-32 flex-col items-center justify-center gap-1.5 text-ink-3">
-          <span className="text-xs">本周还没有打卡数据</span>
+          <span className="text-xs">近 7 天还没有打卡数据</span>
         </div>
       ) : (
         <>
-          <svg viewBox={`0 0 ${w} ${h}`} className="mt-3 w-full">
+          <svg viewBox={`0 0 ${w} ${h}`} className="mt-3 w-full" aria-hidden="true">
             <defs>
               <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.18" />
@@ -76,6 +76,9 @@ export default function WeeklyTrend({ series, unit = '次', title = '本周打�
               <span key={s.date}>{s.label}</span>
             ))}
           </div>
+          <ul className="sr-only">
+            {series.map((point) => <li key={point.date}>{point.date}: {point.value} {unit}</li>)}
+          </ul>
         </>
       )}
     </div>

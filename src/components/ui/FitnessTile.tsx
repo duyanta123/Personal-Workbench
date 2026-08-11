@@ -1,8 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { Dumbbell } from 'lucide-react'
-import { bodyPartFrequency, sessionsPerWeek, weeklyVolume } from '../../utils/workoutStats'
-import { todayStr } from '../../utils/date'
-import type { WorkoutExercise, WorkoutSession } from '../../types'
+import type { WorkoutStatsSummary } from '../../hooks/useWorkbenchSummary'
 
 const BODY_PART_LABEL: Record<string, string> = {
   chest: '胸',
@@ -18,22 +16,15 @@ const BODY_PART_LABEL: Record<string, string> = {
 const COLORS = ['var(--m3)', 'var(--m1)', 'var(--m2)', 'var(--m4)', 'var(--m5)']
 
 interface FitnessTileProps {
-  sessions: WorkoutSession[]
-  exercises: WorkoutExercise[]
+  summary: WorkoutStatsSummary
 }
 
 /** 健身进度：本周训练次数 + 各部位训练分布（对齐模板「本周目标」进度条列表） */
-export default function FitnessTile({ sessions, exercises }: FitnessTileProps) {
+export default function FitnessTile({ summary }: FitnessTileProps) {
   const navigate = useNavigate()
-  const today = todayStr()
-
-  const weekCount = sessionsPerWeek(sessions, today, 1)[0]?.count ?? 0
-  const weekVol = weeklyVolume(exercises, sessions, today)
-
-  const freq = bodyPartFrequency(sessions)
-  const parts = Object.entries(freq)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
+  const weekCount = summary.week_sessions
+  const weekVol = summary.week_volume
+  const parts = summary.body_parts.slice(0, 5)
   const max = Math.max(1, ...parts.map((p) => p[1]))
 
   return (

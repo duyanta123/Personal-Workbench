@@ -5,6 +5,10 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import { queryClient } from './lib/queryClient'
 import { useThemeStore } from './stores/theme'
+import { AuthProvider } from './hooks/useAuth'
+import QueryPersistence from './components/QueryPersistence'
+import ChunkErrorBoundary from './components/ChunkErrorBoundary'
+import PwaUpdatePrompt from './components/PwaUpdatePrompt'
 import './index.css'
 
 useThemeStore.getState().init()
@@ -12,9 +16,15 @@ useThemeStore.getState().init()
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      <AuthProvider>
+        <QueryPersistence />
+        <ChunkErrorBoundary>
+          <BrowserRouter>
+            <App />
+            <PwaUpdatePrompt />
+          </BrowserRouter>
+        </ChunkErrorBoundary>
+      </AuthProvider>
     </QueryClientProvider>
   </React.StrictMode>
 )

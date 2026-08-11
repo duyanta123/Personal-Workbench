@@ -1,31 +1,40 @@
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { DragEvent, FormEvent } from 'react'
 import {
   Check,
+  ChevronLeft,
+  ChevronRight,
   ChevronDown,
   ChevronUp,
   ClipboardList,
   Pin,
   PinOff,
+  Pencil,
   Plus,
   Search,
-  Trash2
+  Trash2,
+  X
 } from 'lucide-react'
 import {
   useAddTodo,
   useDeleteTodo,
-  useReorderTodos,
+  useMoveTodo,
+  useTodoById,
+  useTodoStats,
   useTodos,
   useToggleTodo,
-  useToggleTodoPin
+  useToggleTodoPin,
+  useUpdateTodo,
+  TODOS_PAGE_SIZE,
+  todosListKey
 } from '../hooks/useTodos'
+import type { TodoPage } from '../hooks/useTodos'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
-import { dateStr, todayStr } from '../utils/date'
-import { reorder } from '../utils/reorder'
-import { todoRestoreInput } from '../utils/restore'
+import { dateStr } from '../utils/date'
 import type { Priority, Todo } from '../types'
+import { useAuth } from '../hooks/useAuth'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
@@ -38,6 +47,10 @@ import IconButton from '../components/ui/IconButton'
 import Ring from '../components/ui/Ring'
 import SideCard from '../components/ui/SideCard'
 import { cn } from '../lib/cn'
+import QueryError from '../components/ui/QueryError'
+import { useSearchParams } from 'react-router-dom'
+import { useCurrentDate } from '../hooks/useCurrentDate'
+import { useClampPage } from '../hooks/useClampPage'
 
 const LEVEL_META: Record<Priority, { label: string; variant: 'danger' | 'warning' | 'accent' }> = {
   high: { label: '高', variant: 'danger' },
@@ -62,65 +75,85 @@ function dueMeta(t: Todo, today: string) {
 }
 
 export default function Todos() {
-  const { data: todos, isLoading } = useTodos()
+  const [page, setPage] = useState(0)
+  const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query.trim())
+  const todosQuery = useTodos({ page, query: deferredQuery })
+  const todos = todosQuery.data?.items
+  useClampPage(todosQuery.data?.total, TODOS_PAGE_SIZE, page, setPage)
+  const isLoading = todosQuery.isLoading
+  const statsQuery = useTodoStats()
   const addTodo = useAddTodo()
   const toggleTodo = useToggleTodo()
   const togglePin = useToggleTodoPin()
-  const reorderTodos = useReorderTodos()
+  const updateTodo = useUpdateTodo()
+  const moveTodo = useMoveTodo()
   const deleteTodo = useDeleteTodo()
   const push = useToastStore((s) => s.push)
   const touch = useTouch()
+  const { userId } = useAuth()
 
   const [text, setText] = useState('')
   const [level, setLevel] = useState<Priority>('mid')
   const [due, setDue] = useState<string>('')
   const [dragId, setDragId] = useState<string | null>(null)
   const [showDone, setShowDone] = useState(false)
-  const [query, setQuery] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const focusId = searchParams.get('focus')
+  const focusQuery = useTodoById(focusId)
 
-  const today = todayStr()
-  const doneCount = todos?.filter((t) => t.done).length ?? 0
-  const totalCount = todos?.length ?? 0
+  const today = useCurrentDate()
+  const doneCount = statsQuery.data?.done ?? 0
+  const totalCount = statsQuery.data?.total ?? 0
   const pct = totalCount ? (doneCount / totalCount) * 100 : 0
 
-  const searching = query.trim().length > 0
-  const matchQuery = (t: Todo) => {
-    if (!searching) return true
-    const q = query.trim().toLowerCase()
-    return t.text.toLowerCase().includes(q)
-  }
-
-  const baseNotDone = (todos ?? []).filter((t) => !t.done)
+  const normalizedQuery = query.trim().toLowerCase()
+  const searching = normalizedQuery.length > 0
   const notDone = useMemo(
-    () => (searching ? baseNotDone.filter(matchQuery) : baseNotDone),
-    [searching, baseNotDone, query]
+    () => (todos ?? []).filter((todo) => !todo.done && (!searching || todo.text.toLowerCase().includes(normalizedQuery))),
+    [normalizedQuery, searching, todos]
   )
-  const doneList = (todos ?? []).filter((t) => t.done && matchQuery(t))
+  const doneList = (todos ?? []).filter(
+    (todo) => todo.done && (!searching || todo.text.toLowerCase().includes(normalizedQuery))
+  )
 
   // 侧栏统计
-  const byLevel = useMemo(() => {
-    const m = { high: 0, mid: 0, low: 0 }
-    for (const t of todos ?? []) if (!t.done) m[t.level]++
-    return m
-  }, [todos])
+  const byLevel = statsQuery.data?.byLevel ?? { high: 0, mid: 0, low: 0 }
 
-  const { requestDelete } = useDeferredDelete<Todo>({
-    key: ['todos'],
+  useEffect(() => setPage(0), [query])
+  useEffect(() => {
+    if (!focusId || focusQuery.isLoading || focusQuery.data !== null) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('focus')
+    setSearchParams(next, { replace: true })
+    push({ kind: 'info', message: '定位的待办不存在或已删除' })
+  }, [focusId, focusQuery.isLoading, focusQuery.data, push, searchParams, setSearchParams])
+
+  const { requestDelete, isPending: isDeletePending, remainingSeconds } = useDeferredDelete<Todo, TodoPage>({
+    key: todosListKey(userId, page, deferredQuery),
     label: (t) => t.text,
     remove: (id) => deleteTodo.mutateAsync(id),
-    restore: (t) => addTodo.mutate(todoRestoreInput(t))
+    cache: {
+      getItems: (cache) => cache?.items ?? [],
+      remove: (cache, id) => cache && { items: cache.items.filter((item) => item.id !== id), total: Math.max(0, cache.total - 1) },
+      restore: (cache) => cache
+    }
   })
-
-  function persistOrder(list: Todo[]) {
-    reorderTodos.mutate(list.map((t, i) => ({ id: t.id, user_id: t.user_id, sort_order: i })))
-  }
 
   function handleDropOn(targetId: string) {
     if (!dragId || dragId === targetId) return
     const from = notDone.findIndex((t) => t.id === dragId)
     const to = notDone.findIndex((t) => t.id === targetId)
     if (from < 0 || to < 0) return
-    persistOrder([...reorder(notDone, from, to), ...doneList])
+    if (notDone[from].pinned !== notDone[to].pinned) {
+      push({ kind: 'info', message: '置顶与普通待办不能跨组拖动，请先切换置顶状态' })
+      setDragId(null)
+      return
+    }
+    moveTodo.mutate({ id: dragId, anchorId: targetId, position: from < to ? 'after' : 'before' }, {
+      onError: () => push({ kind: 'error', message: '排序保存失败，请重试' })
+    })
     setDragId(null)
   }
 
@@ -128,28 +161,62 @@ export default function Todos() {
     const idx = notDone.findIndex((t) => t.id === id)
     const to = idx + dir
     if (idx < 0 || to < 0 || to >= notDone.length) return
-    persistOrder([...reorder(notDone, idx, to), ...doneList])
+    if (notDone[idx].pinned !== notDone[to].pinned) return
+    moveTodo.mutate({
+      id,
+      anchorId: notDone[to].id,
+      position: dir < 0 ? 'before' : 'after'
+    }, { onError: () => push({ kind: 'error', message: '排序保存失败，请重试' }) })
   }
 
-  function handleToggle(t: Todo) {
+  async function handleToggle(t: Todo) {
     const nextDone = !t.done
-    toggleTodo.mutate({ id: t.id, done: nextDone })
-    if (nextDone) {
-      const left = (todos ?? []).filter((x) => x.id !== t.id && !x.done)
-      push({
-        kind: 'success',
-        message: left.length === 0 ? '今日计划全部完成' : `完成「${t.text}」`
-      })
+    try {
+      await toggleTodo.mutateAsync({ id: t.id, done: nextDone })
+      if (nextDone) {
+        const refreshed = await statsQuery.refetch()
+        const nextStats = refreshed.data ?? statsQuery.data
+        push({ kind: 'success', message: nextStats && nextStats.done >= nextStats.total ? '今日计划全部完成' : `完成「${t.text}」` })
+      }
+    } catch {
+      push({ kind: 'error', message: '待办状态保存失败，请重试' })
     }
   }
 
-  function handleAdd(e: FormEvent) {
+  async function handlePin(t: Todo) {
+    try {
+      await togglePin.mutateAsync({ id: t.id, pinned: !t.pinned })
+      push({ kind: 'info', message: t.pinned ? '已取消置顶' : '已置顶' })
+    } catch {
+      push({ kind: 'error', message: '待办置顶保存失败，请重试' })
+    }
+  }
+
+  async function handleAdd(e: FormEvent) {
     e.preventDefault()
     const t = text.trim()
     if (!t) return
-    addTodo.mutate({ text: t, level, due_date: due || null })
-    setText('')
-    setDue('')
+    try {
+      if (editingId) {
+        await updateTodo.mutateAsync({ id: editingId, patch: { text: t, level, due_date: due || null } })
+        push({ kind: 'success', message: '待办已更新' })
+      } else {
+        await addTodo.mutateAsync({ text: t, level, due_date: due || null })
+        push({ kind: 'success', message: '待办已添加' })
+      }
+      setText('')
+      setDue('')
+      setEditingId(null)
+    } catch {
+      push({ kind: 'error', message: editingId ? '待办更新失败，请重试' : '待办添加失败，请重试' })
+    }
+  }
+
+  function startEdit(todo: Todo) {
+    setEditingId(todo.id)
+    setText(todo.text)
+    setLevel(todo.level)
+    setDue(todo.due_date ?? '')
   }
 
   function quickDue(offset: number | null) {
@@ -176,6 +243,21 @@ export default function Todos() {
           ) : undefined
         }
       />
+      {todosQuery.isError && <QueryError onRetry={() => todosQuery.refetch()} />}
+
+      {focusQuery.data && (
+        <div className="rounded-2xl border border-accent bg-accent-2/40 p-4 shadow-card">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">搜索定位</div>
+          <div className="mt-1 text-sm font-semibold text-ink">{focusQuery.data.text}</div>
+          <button
+            type="button"
+            onClick={() => { const next = new URLSearchParams(searchParams); next.delete('focus'); setSearchParams(next, { replace: true }) }}
+            className="mt-2 text-xs font-medium text-accent"
+          >
+            关闭定位
+          </button>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         {/* 左栏 */}
@@ -194,13 +276,14 @@ export default function Todos() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜索待办…"
+              maxLength={1000}
               className="pl-9"
             />
           </div>
 
           {/* 添加表单 */}
           <form onSubmit={handleAdd} className="space-y-3 rounded-2xl border border-border bg-surface p-4">
-            <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="今天要做什么？" />
+            <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="今天要做什么？" maxLength={1000} />
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 <Segmented value={level} onChange={setLevel} options={LEVEL_OPTIONS} />
@@ -233,10 +316,13 @@ export default function Todos() {
                   ))}
                 </div>
               </div>
-              <Button type="submit" disabled={!text.trim()}>
+              <div className="flex gap-2">
+              <Button type="submit" disabled={!text.trim() || addTodo.isPending || updateTodo.isPending}>
                 <Plus size={16} />
-                添加
+                {editingId ? '保存' : '添加'}
               </Button>
+              {editingId && <IconButton type="button" onClick={() => { setEditingId(null); setText(''); setDue('') }} aria-label="取消编辑"><X size={16} /></IconButton>}
+              </div>
             </div>
           </form>
 
@@ -264,7 +350,7 @@ export default function Todos() {
                     return (
                       <li
                         key={t.id}
-                        draggable={!searching}
+                        draggable={!searching && !isDeletePending(t.id)}
                         onDragStart={(e: DragEvent) => {
                           setDragId(t.id)
                           e.dataTransfer.effectAllowed = 'move'
@@ -276,11 +362,12 @@ export default function Todos() {
                         }}
                         className={cn(
                           'group flex items-center gap-3 rounded-2xl border bg-surface px-4 py-3 transition-colors duration-150',
-                          dragId === t.id ? 'border-accent bg-accent-2/40 opacity-60' : 'border-border hover:bg-hover'
+                          isDeletePending(t.id) ? 'border-danger/40 opacity-60' : dragId === t.id ? 'border-accent bg-accent-2/40 opacity-60' : 'border-border hover:bg-hover'
                         )}
                       >
                         <button
                           onClick={() => handleToggle(t)}
+                          disabled={isDeletePending(t.id)}
                           aria-label="切换完成"
                           className={cn(
                             'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-150',
@@ -290,6 +377,7 @@ export default function Todos() {
                           <Check size={14} strokeWidth={3} className="check-pop" />
                         </button>
                         <span className="flex-1 text-sm text-ink">{t.text}</span>
+                        {isDeletePending(t.id) && <Badge variant="danger">待删除 {remainingSeconds(t.id)}s</Badge>}
                         {due.label && (
                           due.danger ? (
                             <Badge variant="danger">{due.label}</Badge>
@@ -313,7 +401,17 @@ export default function Todos() {
                           )}
                           <IconButton
                             size="sm"
-                            onClick={() => togglePin.mutate({ id: t.id, pinned: !t.pinned })}
+                            onClick={() => startEdit(t)}
+                            disabled={isDeletePending(t.id)}
+                            aria-label="编辑"
+                            className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}
+                          >
+                            <Pencil size={15} />
+                          </IconButton>
+                          <IconButton
+                            size="sm"
+                            onClick={() => void handlePin(t)}
+                            disabled={togglePin.isPending || isDeletePending(t.id)}
                             aria-label={t.pinned ? '取消置顶' : '置顶'}
                             className={cn(
                               touch || t.pinned ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100',
@@ -325,6 +423,7 @@ export default function Todos() {
                           <IconButton
                             size="sm"
                             onClick={() => requestDelete(t)}
+                            disabled={isDeletePending(t.id)}
                             aria-label="删除"
                             className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}
                           >
@@ -361,16 +460,20 @@ export default function Todos() {
                         >
                           <button
                             onClick={() => handleToggle(t)}
+                            disabled={isDeletePending(t.id)}
                             aria-label="恢复未完成"
                             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-m1 bg-m1 text-white"
                           >
                             <Check size={14} strokeWidth={3} />
                           </button>
                           <span className="flex-1 text-sm text-ink-3 line-through">{t.text}</span>
+                          {isDeletePending(t.id) && <Badge variant="danger">待删除 {remainingSeconds(t.id)}s</Badge>}
                           <Badge variant={LEVEL_META[t.level].variant}>{LEVEL_META[t.level].label}</Badge>
+                          <IconButton size="sm" onClick={() => startEdit(t)} disabled={isDeletePending(t.id)} aria-label="编辑"><Pencil size={15} /></IconButton>
                           <IconButton
                             size="sm"
                             onClick={() => requestDelete(t)}
+                            disabled={isDeletePending(t.id)}
                             aria-label="删除"
                             className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}
                           >
@@ -383,6 +486,13 @@ export default function Todos() {
                 </div>
               )}
             </>
+          )}
+          {(todosQuery.data?.total ?? 0) > TODOS_PAGE_SIZE && (
+            <div className="flex items-center justify-center gap-3">
+              <IconButton onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0 || todosQuery.isFetching} aria-label="上一页"><ChevronLeft size={17} /></IconButton>
+              <span className="text-xs text-ink-3 tabular-nums">第 {page + 1} / {Math.ceil((todosQuery.data?.total ?? 0) / TODOS_PAGE_SIZE)} 页</span>
+              <IconButton onClick={() => setPage((value) => value + 1)} disabled={(page + 1) * TODOS_PAGE_SIZE >= (todosQuery.data?.total ?? 0) || todosQuery.isFetching} aria-label="下一页"><ChevronRight size={17} /></IconButton>
+            </div>
           )}
         </div>
 

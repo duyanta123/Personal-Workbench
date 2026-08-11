@@ -9,8 +9,8 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['icon.svg'],
+      registerType: 'prompt',
+      includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png'],
       manifest: {
         name: '个人工作台',
         short_name: '工作台',
@@ -21,18 +21,31 @@ export default defineConfig({
         display: 'standalone',
         start_url: '/',
         icons: [
-          { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }
+          { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
+          { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
         ]
       },
       workbox: {
         navigateFallback: '/index.html',
-        globPatterns: ['**/*.{js,css,html,svg,woff2}']
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2}']
       }
     })
   ],
   server: {
     port: 5173,
     host: true
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'data-vendor': ['@supabase/supabase-js', '@tanstack/react-query'],
+          'icons-vendor': ['lucide-react']
+        }
+      }
+    }
   },
   test: {
     environment: 'jsdom',

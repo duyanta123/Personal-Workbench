@@ -25,6 +25,8 @@ export default function Segmented<T extends string>({
           key={o.value}
           type="button"
           onClick={() => onChange(o.value)}
+          aria-selected={value === o.value}
+          role="tab"
           className={cn(
             'rounded-lg px-3 py-1.5 font-medium transition-colors duration-150',
             value === o.value

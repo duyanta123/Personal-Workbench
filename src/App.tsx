@@ -4,6 +4,8 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 
 const AuthPage = lazy(() => import('./components/AuthPage'))
+const ForgotPasswordPage = lazy(() => import('./components/ForgotPasswordPage'))
+const UpdatePasswordPage = lazy(() => import('./components/UpdatePasswordPage'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Todos = lazy(() => import('./pages/Todos'))
 const Checkins = lazy(() => import('./pages/Checkins'))
@@ -27,6 +29,8 @@ export default function App() {
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/login" element={<AuthPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/update-password" element={<UpdatePasswordPage />} />
         <Route element={<ProtectedRoute />}>
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />

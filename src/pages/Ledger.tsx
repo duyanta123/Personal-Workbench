@@ -1,13 +1,22 @@
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Pencil, Plus, Search, Settings2, Trash2, Wallet, X } from 'lucide-react'
-import { useAddLedgerEntry, useDeleteLedgerEntry, useLedgerEntries, useUpdateLedgerEntry } from '../hooks/useLedger'
+import { ChevronLeft, ChevronRight, Pencil, Plus, Search, Settings2, Trash2, Wallet, X } from 'lucide-react'
+import {
+  LEDGER_PAGE_SIZE,
+  ledgerListKey,
+  useAddLedgerEntry,
+  useDeleteLedgerEntry,
+  useLedgerEntries,
+  useLedgerEntryById,
+  useLedgerSummary,
+  useUpdateLedgerEntry
+} from '../hooks/useLedger'
+import type { LedgerPage } from '../hooks/useLedger'
 import { usePreferences, useUpdatePreferences, mergeCategories } from '../hooks/usePreferences'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
-import { monthPrefix, todayStr } from '../utils/date'
-import { dailyBars, donutStops } from '../utils/ledgerStats'
+import { donutStops } from '../utils/ledgerStats'
 import type { LedgerEntry } from '../types'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
@@ -18,6 +27,11 @@ import PageHeader from '../components/ui/PageHeader'
 import IconButton from '../components/ui/IconButton'
 import SideCard from '../components/ui/SideCard'
 import { cn } from '../lib/cn'
+import { useAuth } from '../hooks/useAuth'
+import QueryError from '../components/ui/QueryError'
+import { useSearchParams } from 'react-router-dom'
+import { useCurrentDate, useTodayDateField } from '../hooks/useCurrentDate'
+import { useClampPage } from '../hooks/useClampPage'
 
 const BUILTIN_CATS = {
   expense: ['餐饮', '交通', '购物', '居住', '娱乐', '学习', '医疗', '其他'],
@@ -27,61 +41,52 @@ const BUILTIN_CATS = {
 type Kind = LedgerEntry['kind']
 
 export default function Ledger() {
-  const { data: entries, isLoading } = useLedgerEntries()
+  const currentDate = useCurrentDate()
+  const month = currentDate.slice(0, 7)
+  const [page, setPage] = useState(0)
+  const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query.trim())
+  const entriesQuery = useLedgerEntries({ page, query: deferredQuery })
+  useClampPage(entriesQuery.data?.total, LEDGER_PAGE_SIZE, page, setPage)
+  const entries = entriesQuery.data?.items
+  const isLoading = entriesQuery.isLoading
+  const summaryQuery = useLedgerSummary(month)
   const addEntry = useAddLedgerEntry()
   const updateEntry = useUpdateLedgerEntry()
   const deleteEntry = useDeleteLedgerEntry()
-  const { data: prefs } = usePreferences()
+  const prefsQuery = usePreferences()
+  const { data: prefs } = prefsQuery
   const updatePrefs = useUpdatePreferences()
   const push = useToastStore((s) => s.push)
   const touch = useTouch()
+  const { userId } = useAuth()
 
   const [kind, setKind] = useState<Kind>('expense')
   const [cat, setCat] = useState('餐饮')
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
-  const [date, setDate] = useState(todayStr())
+  const dateField = useTodayDateField()
+  const date = dateField.value
+  const setDate = dateField.setValue
   const [editingId, setEditingId] = useState<string | null>(null)
   const [newCat, setNewCat] = useState('')
   const [budgetEdit, setBudgetEdit] = useState(false)
   const [budgetVal, setBudgetVal] = useState('')
-  const [query, setQuery] = useState('')
+  const [year, monthNum] = month.split('-').map(Number)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const focusId = searchParams.get('focus')
+  const focusQuery = useLedgerEntryById(focusId)
 
-  const month = monthPrefix()
-  const now = new Date()
-  const year = now.getFullYear()
-  const monthNum = now.getMonth() + 1
+  const expenseTotal = summaryQuery.data?.expense ?? 0
+  const incomeTotal = summaryQuery.data?.income ?? 0
+  const todayExpense = summaryQuery.data?.dailyExpense.find((row) => row.date === currentDate)?.total ?? 0
 
-  const monthEntries = useMemo(
-    () => (entries ?? []).filter((e) => e.entry_date.startsWith(month)),
-    [entries, month]
-  )
-  const expenseTotal = monthEntries.filter((e) => e.kind === 'expense').reduce((s, e) => s + e.amount, 0)
-  const incomeTotal = monthEntries.filter((e) => e.kind === 'income').reduce((s, e) => s + e.amount, 0)
-  const todayExpense = (entries ?? [])
-    .filter((e) => e.kind === 'expense' && e.entry_date === todayStr())
-    .reduce((s, e) => s + e.amount, 0)
-
-  // 搜索过滤：分类 / 备注
-  const visibleEntries = useMemo(() => {
-    if (!entries) return []
-    if (!query.trim()) return entries
-    const q = query.trim().toLowerCase()
-    return entries.filter(
-      (e) => e.category.toLowerCase().includes(q) || (e.note ?? '').toLowerCase().includes(q)
-    )
-  }, [entries, query])
-
-  const customCats = prefs?.categories?.[kind] ?? []
+  const customCats = useMemo(() => prefs?.categories?.[kind] ?? [], [kind, prefs?.categories])
   const cats = useMemo(() => mergeCategories(BUILTIN_CATS[kind], customCats), [kind, customCats])
 
   const catTotals = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const e of monthEntries) {
-      if (e.kind === 'expense') m.set(e.category, (m.get(e.category) ?? 0) + e.amount)
-    }
-    return [...m.entries()].sort((a, b) => b[1] - a[1])
-  }, [monthEntries])
+    return summaryQuery.data?.categoryExpense ?? []
+  }, [summaryQuery.data?.categoryExpense])
 
   const donut = donutStops(catTotals)
   const donutBg =
@@ -91,30 +96,47 @@ export default function Ledger() {
           .join(', ')})`
       : 'none'
 
-  const bars = useMemo(() => dailyBars(monthEntries, year, monthNum), [monthEntries, year, monthNum])
+  const bars = useMemo(() => {
+    const totals = new Map((summaryQuery.data?.dailyExpense ?? []).map((row) => [row.date, row.total]))
+    const days = new Date(year, monthNum, 0).getDate()
+    return Array.from({ length: days }, (_, index) => {
+      const day = index + 1
+      const date = `${month}-${String(day).padStart(2, '0')}`
+      return { day, date, total: totals.get(date) ?? 0 }
+    })
+  }, [summaryQuery.data?.dailyExpense, year, monthNum, month])
   const maxBar = Math.max(1, ...bars.map((b) => b.total))
 
   const budget = prefs?.monthly_budget ?? null
 
-  const { requestDelete } = useDeferredDelete<LedgerEntry>({
-    key: ['ledger_entries'],
+  useEffect(() => setPage(0), [query])
+  useEffect(() => {
+    if (!focusId || focusQuery.isLoading || focusQuery.data !== null) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('focus')
+    setSearchParams(next, { replace: true })
+    push({ kind: 'info', message: '定位的账单不存在或已删除' })
+  }, [focusId, focusQuery.isLoading, focusQuery.data, push, searchParams, setSearchParams])
+
+  const { requestDelete, isPending: isDeletePending, remainingSeconds } = useDeferredDelete<LedgerEntry, LedgerPage>({
+    key: ledgerListKey(userId, page, deferredQuery),
     label: (e) => `${e.category} ${e.amount}`,
     remove: (id) => deleteEntry.mutateAsync(id),
-    restore: (e) =>
-      addEntry.mutate({
-        kind: e.kind,
-        category: e.category,
-        amount: e.amount,
-        note: e.note,
-        entry_date: e.entry_date
-      })
+    cache: {
+      getItems: (cache) => cache?.items ?? [],
+      remove: (cache, id) => cache && {
+        items: cache.items.filter((item) => item.id !== id),
+        total: Math.max(0, cache.total - 1)
+      },
+      restore: (cache) => cache
+    }
   })
 
   function resetForm() {
     setEditingId(null)
     setAmount('')
     setNote('')
-    setDate(todayStr())
+    dateField.resetToToday()
   }
 
   function startEdit(e: LedgerEntry) {
@@ -126,40 +148,64 @@ export default function Ledger() {
     setDate(e.entry_date)
   }
 
-  function handleSubmit(ev: FormEvent) {
+  async function handleSubmit(ev: FormEvent) {
     ev.preventDefault()
     const amt = Number(amount)
     if (!amt || amt <= 0) return
     const payload = { kind, category: cat, amount: amt, note: note.trim() || null, entry_date: date }
-    if (editingId) {
-      updateEntry.mutate({ id: editingId, patch: payload })
-      push({ kind: 'success', message: '账单已更新' })
-    } else {
-      addEntry.mutate(payload)
-      push({ kind: 'success', message: `已记一笔 ¥${amt.toFixed(2)}` })
+    try {
+      if (editingId) {
+        await updateEntry.mutateAsync({ id: editingId, patch: payload })
+        push({ kind: 'success', message: '账单已更新' })
+      } else {
+        await addEntry.mutateAsync(payload)
+        push({ kind: 'success', message: `已记一笔 ¥${amt.toFixed(2)}` })
+      }
+      resetForm()
+    } catch {
+      push({ kind: 'error', message: editingId ? '账单更新失败，请重试' : '记账失败，请重试' })
     }
-    resetForm()
   }
 
-  function addCustomCat() {
+  async function addCustomCat() {
     const v = newCat.trim()
     if (!v || cats.includes(v)) return
-    updatePrefs.mutate({
-      categories: {
-        expense: kind === 'expense' ? [...customCats, v] : (prefs?.categories?.expense ?? []),
-        income: kind === 'income' ? [...customCats, v] : (prefs?.categories?.income ?? [])
-      }
-    })
-    setCat(v)
-    setNewCat('')
-    push({ kind: 'success', message: `已添加分类「${v}」` })
+    try {
+      await updatePrefs.mutateAsync({
+        categories: {
+          expense: kind === 'expense' ? [...customCats, v] : (prefs?.categories?.expense ?? []),
+          income: kind === 'income' ? [...customCats, v] : (prefs?.categories?.income ?? [])
+        }
+      })
+      setCat(v)
+      setNewCat('')
+      push({ kind: 'success', message: `已添加分类「${v}」` })
+    } catch {
+      push({ kind: 'error', message: '分类保存失败，请重试' })
+    }
   }
 
-  function saveBudget() {
+  async function saveBudget() {
     const v = Number(budgetVal)
-    updatePrefs.mutate({ monthly_budget: v > 0 ? v : null })
-    setBudgetEdit(false)
-    push({ kind: 'success', message: v > 0 ? `预算设为 ¥${v}` : '已清除预算' })
+    if (!Number.isFinite(v) || v <= 0) return
+    try {
+      await updatePrefs.mutateAsync({ monthly_budget: v })
+      setBudgetEdit(false)
+      push({ kind: 'success', message: `预算设为 ¥${v}` })
+    } catch {
+      push({ kind: 'error', message: '预算保存失败，请重试' })
+    }
+  }
+
+  async function clearBudget() {
+    try {
+      await updatePrefs.mutateAsync({ monthly_budget: null })
+      setBudgetEdit(false)
+      setBudgetVal('')
+      push({ kind: 'success', message: '已清除预算' })
+    } catch {
+      push({ kind: 'error', message: '预算清除失败，请重试' })
+    }
   }
 
   return (
@@ -169,6 +215,18 @@ export default function Ledger() {
         title="记账"
         description="清楚每一笔的流向。"
       />
+      {(entriesQuery.isError || summaryQuery.isError || prefsQuery.isError) && (
+        <QueryError onRetry={() => { entriesQuery.refetch(); summaryQuery.refetch(); prefsQuery.refetch() }} />
+      )}
+
+      {focusQuery.data && (
+        <div className="rounded-2xl border border-accent bg-accent-2/40 p-4 shadow-card">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">搜索定位</div>
+          <div className="mt-1 text-sm font-semibold text-ink">{focusQuery.data.category} · {focusQuery.data.kind === 'expense' ? '-' : '+'}¥{focusQuery.data.amount.toFixed(2)}</div>
+          {focusQuery.data.note && <p className="mt-1 text-xs text-ink-2">{focusQuery.data.note}</p>}
+          <button type="button" onClick={() => { const next = new URLSearchParams(searchParams); next.delete('focus'); setSearchParams(next, { replace: true }) }} className="mt-2 text-xs font-medium text-accent">关闭定位</button>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-4">
@@ -200,16 +258,17 @@ export default function Ledger() {
           <div className="flex items-center gap-2">
             <Input
               type="number"
-              min="0"
+              min="0.01"
               value={budgetVal}
               onChange={(e) => setBudgetVal(e.target.value)}
               placeholder="月预算金额"
+              max="9999999999.99"
               className="w-36 tabular-nums"
-              autoFocus
             />
-            <Button size="sm" onClick={saveBudget} disabled={!Number(budgetVal)}>
+            <Button size="sm" onClick={saveBudget} disabled={!Number(budgetVal) || updatePrefs.isPending}>
               保存
             </Button>
+            {budget !== null && <Button size="sm" variant="ghost" onClick={clearBudget} disabled={updatePrefs.isPending}>清除预算</Button>}
             <IconButton size="sm" onClick={() => setBudgetEdit(false)} aria-label="取消">
               <X size={16} />
             </IconButton>
@@ -292,6 +351,7 @@ export default function Ledger() {
                 }
               }}
               placeholder="新分类"
+              maxLength={200}
               className="w-16 bg-transparent text-xs text-ink outline-none placeholder:text-ink-3"
             />
             <button type="button" onClick={addCustomCat} aria-label="添加分类" className="text-ink-3 hover:text-accent">
@@ -303,12 +363,13 @@ export default function Ledger() {
         <div className="flex flex-wrap gap-2">
           <Input
             type="number"
-            min="0"
+            min="0.01"
             step="0.01"
             required
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            placeholder="金额"
+              placeholder="金额"
+              max="9999999999.99"
             className="w-32 tabular-nums"
           />
           <Input
@@ -321,10 +382,11 @@ export default function Ledger() {
           <Input
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="备注（可选）"
+              placeholder="备注（可选）"
+              maxLength={100000}
             className="min-w-40 flex-1"
           />
-          <Button type="submit" disabled={!amount || Number(amount) <= 0}>
+          <Button type="submit" disabled={!amount || Number(amount) <= 0 || addEntry.isPending || updateEntry.isPending}>
             <Plus size={16} />
             {editingId ? '保存修改' : '记一笔'}
           </Button>
@@ -373,7 +435,7 @@ export default function Ledger() {
           <h2 className="text-sm font-semibold text-ink">本月每日支出</h2>
           <div className="mt-4 flex h-28 items-end gap-[3px]">
             {bars.map((b) => {
-              const isToday = b.date === todayStr()
+              const isToday = b.date === currentDate
               const h = b.total ? Math.max(8, (b.total / maxBar) * 100) : 2
               return (
                 <div key={b.day} className="group relative flex h-full flex-1 items-end justify-center">
@@ -402,6 +464,7 @@ export default function Ledger() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索分类、备注…"
+          maxLength={200}
           className="pl-9"
         />
       </div>
@@ -414,18 +477,16 @@ export default function Ledger() {
         </div>
       ) : !entries?.length ? (
         <EmptyState
-          icon={<Wallet size={22} />}
-          title="还没有账单"
-          description="先记一笔吧。"
+          icon={deferredQuery ? <Search size={22} /> : <Wallet size={22} />}
+          title={deferredQuery ? '没有匹配的账单' : '还没有账单'}
+          description={deferredQuery ? undefined : '先记一笔吧。'}
         />
-      ) : visibleEntries.length === 0 ? (
-        <EmptyState icon={<Search size={22} />} title="没有匹配的账单" />
       ) : (
         <ul className="space-y-2">
-          {visibleEntries.map((e) => (
+          {entries.map((e) => (
             <li
               key={e.id}
-              className="group flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3 transition-colors duration-150 hover:bg-hover"
+              className={cn('group flex items-center gap-3 rounded-2xl border bg-surface px-4 py-3 transition-colors duration-150 hover:bg-hover', isDeletePending(e.id) ? 'border-danger/40 opacity-60' : 'border-border')}
             >
               <div className="w-20 shrink-0 text-xs text-ink-3 tabular-nums">{e.entry_date.slice(5)}</div>
               <div className="min-w-0 flex-1 text-sm text-ink">
@@ -440,13 +501,15 @@ export default function Ledger() {
               >
                 {e.kind === 'expense' ? '-' : '+'}¥{e.amount.toFixed(2)}
               </div>
+              {isDeletePending(e.id) && <span className="shrink-0 text-[10px] font-medium text-danger">待删除 {remainingSeconds(e.id)}s</span>}
               <div className="flex shrink-0 items-center gap-0.5">
-                <IconButton size="sm" onClick={() => startEdit(e)} aria-label="编辑" className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}>
+                <IconButton size="sm" onClick={() => startEdit(e)} disabled={isDeletePending(e.id)} aria-label="编辑" className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}>
                   <Pencil size={14} />
                 </IconButton>
                 <IconButton
                   size="sm"
                   onClick={() => requestDelete(e)}
+                  disabled={isDeletePending(e.id)}
                   aria-label="删除"
                   className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}
                 >
@@ -456,6 +519,27 @@ export default function Ledger() {
             </li>
           ))}
         </ul>
+      )}
+      {(entriesQuery.data?.total ?? 0) > LEDGER_PAGE_SIZE && (
+        <div className="flex items-center justify-center gap-3">
+          <IconButton
+            onClick={() => setPage((value) => Math.max(0, value - 1))}
+            disabled={page === 0 || entriesQuery.isFetching}
+            aria-label="上一页"
+          >
+            <ChevronLeft size={17} />
+          </IconButton>
+          <span className="text-xs text-ink-3 tabular-nums">
+            第 {page + 1} / {Math.ceil((entriesQuery.data?.total ?? 0) / LEDGER_PAGE_SIZE)} 页
+          </span>
+          <IconButton
+            onClick={() => setPage((value) => value + 1)}
+            disabled={(page + 1) * LEDGER_PAGE_SIZE >= (entriesQuery.data?.total ?? 0) || entriesQuery.isFetching}
+            aria-label="下一页"
+          >
+            <ChevronRight size={17} />
+          </IconButton>
+        </div>
       )}
         </div>
 
@@ -468,7 +552,7 @@ export default function Ledger() {
                 { k: '本月支出', v: `¥${expenseTotal.toFixed(2)}`, c: 'var(--danger)' },
                 { k: '净结余', v: `¥${(incomeTotal - expenseTotal).toFixed(2)}` },
                 { k: '今日支出', v: `¥${todayExpense.toFixed(2)}` },
-                { k: '总笔数', v: `${entries?.length ?? 0} 笔` }
+                { k: '总笔数', v: `${summaryQuery.data?.total ?? 0} 笔` }
               ].map((r) => (
                 <li key={r.k} className="flex items-center justify-between text-xs">
                   <span className="text-ink-2">{r.k}</span>

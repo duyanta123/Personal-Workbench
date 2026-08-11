@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import type { Database } from './database.types'
 
 const url = import.meta.env.VITE_SUPABASE_URL
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -13,6 +14,8 @@ const MAX_RETRIES = 2
  * 仅对「请求根本没到达服务器」的情况重试；HTTP 4xx/5xx 正常返回，不重试。
  */
 function fetchWithRetry(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
+  const retries = method === 'GET' || method === 'HEAD' ? MAX_RETRIES : 0
   return new Promise((resolve, reject) => {
     const attempt = (n: number) => {
       const controller = new AbortController()
@@ -24,7 +27,7 @@ function fetchWithRetry(input: RequestInfo | URL, init?: RequestInit): Promise<R
         })
         .catch((err) => {
           clearTimeout(timer)
-          if (n < MAX_RETRIES) {
+          if (n < retries) {
             setTimeout(() => attempt(n + 1), 400 * (n + 1))
           } else {
             reject(err)
@@ -37,6 +40,6 @@ function fetchWithRetry(input: RequestInfo | URL, init?: RequestInit): Promise<R
 
 export const supabase =
   url && anonKey
-    ? createClient(url, anonKey, { global: { fetch: fetchWithRetry } })
+    ? createClient<Database>(url, anonKey, { global: { fetch: fetchWithRetry } })
     : null
 export const isSupabaseConfigured = Boolean(supabase)

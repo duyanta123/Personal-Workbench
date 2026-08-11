@@ -1,9 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { Dumbbell, Flame, ListTodo, Target, Wallet } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { monthPrefix, todayStr } from '../../utils/date'
-import { sessionsPerWeek } from '../../utils/workoutStats'
-import type { Goal, Habit, HabitLog, LedgerEntry, Note, PracticeProblem, Todo, WorkoutSession } from '../../types'
+import type { DashboardOverview } from '../../hooks/useWorkbenchSummary'
 
 const WEEK_CN = ['日', '一', '二', '三', '四', '五', '六']
 
@@ -11,14 +9,8 @@ const WEEK_CN = ['日', '一', '二', '三', '四', '五', '六']
 const WEEK_WORKOUT_TARGET = 3
 
 interface OverviewTileProps {
-  todos: Todo[]
-  habits: Habit[]
-  logs: HabitLog[]
-  goals: Goal[]
-  entries: LedgerEntry[]
-  notes: Note[]
-  problems: PracticeProblem[]
-  workouts: WorkoutSession[]
+  date: string
+  overview: DashboardOverview
 }
 
 interface StatItem {
@@ -32,30 +24,19 @@ interface StatItem {
 
 /** 今日速览：4 个数字入口 + 右侧深色结余卡，点击直达对应模块 */
 export default function OverviewTile({
-  todos,
-  habits,
-  logs,
-  goals,
-  entries,
-  notes,
-  problems,
-  workouts
+  date,
+  overview
 }: OverviewTileProps) {
   const navigate = useNavigate()
-  const now = new Date()
+  const now = new Date(`${date}T12:00:00`)
   const dateLabel = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 周${WEEK_CN[now.getDay()]}`
-  const today = todayStr()
-  const month = monthPrefix()
 
   // 速览数字
-  const doneCount = todos.filter((t) => t.done).length
-  const todoPct = todos.length ? Math.round((doneCount / todos.length) * 100) : 0
-  const doneToday = new Set(logs.filter((l) => l.log_date === today).map((l) => l.habit_id))
-  const habitPct = habits.length ? Math.round((doneToday.size / habits.length) * 100) : 0
-  const goalPct = goals.length
-    ? Math.round(goals.reduce((s, g) => s + Math.min(100, (g.current / Math.max(1, g.target)) * 100), 0) / goals.length)
-    : 0
-  const weekWorkouts = sessionsPerWeek(workouts, today, 1)[0]?.count ?? 0
+  const doneCount = overview.todo_done
+  const todoPct = overview.todo_total ? Math.round((doneCount / overview.todo_total) * 100) : 0
+  const habitPct = overview.habit_total ? Math.round((overview.habit_done / overview.habit_total) * 100) : 0
+  const goalPct = Math.round(overview.goal_percent)
+  const weekWorkouts = overview.week_workouts
   const workoutPct = Math.min(100, Math.round((weekWorkouts / WEEK_WORKOUT_TARGET) * 100))
 
   const stats: StatItem[] = [
@@ -63,17 +44,17 @@ export default function OverviewTile({
       to: '/todos',
       icon: ListTodo,
       cls: 'bg-m1/10 text-m1',
-      value: `${doneCount}/${todos.length}`,
+      value: `${doneCount}/${overview.todo_total}`,
       label: '今日待办',
-      sub: todos.length ? `完成 ${todoPct}%` : '暂无待办'
+      sub: overview.todo_total ? `完成 ${todoPct}%` : '暂无待办'
     },
     {
       to: '/checkins',
       icon: Flame,
       cls: 'bg-m2/10 text-m2',
-      value: `${doneToday.size}/${habits.length}`,
+      value: `${overview.habit_done}/${overview.habit_total}`,
       label: '今日打卡',
-      sub: habits.length ? `完成 ${habitPct}%` : '暂无习惯'
+      sub: overview.habit_total ? `完成 ${habitPct}%` : '暂无习惯'
     },
     {
       to: '/goals',
@@ -81,7 +62,7 @@ export default function OverviewTile({
       cls: 'bg-m4/10 text-m4',
       value: `${goalPct}%`,
       label: '目标进度',
-      sub: `${goals.length} 项目标`
+      sub: `${overview.goal_total} 项目标`
     },
     {
       to: '/workout',
@@ -94,19 +75,10 @@ export default function OverviewTile({
   ]
 
   // 深色侧栏统计
-  const totalRecords =
-    todos.length + habits.length + entries.length + goals.length + notes.length + problems.length + workouts.length
-  const pinnedCount =
-    todos.filter((t) => t.pinned).length +
-    habits.filter((h) => h.pinned).length +
-    goals.filter((g) => g.pinned).length +
-    notes.filter((n) => n.pinned).length
-  const monthIncome = entries
-    .filter((e) => e.kind === 'income' && e.entry_date.startsWith(month))
-    .reduce((s, e) => s + e.amount, 0)
-  const monthExpense = entries
-    .filter((e) => e.kind === 'expense' && e.entry_date.startsWith(month))
-    .reduce((s, e) => s + e.amount, 0)
+  const totalRecords = overview.total_records
+  const pinnedCount = overview.pinned_total
+  const monthIncome = overview.month_income
+  const monthExpense = overview.month_expense
   const balance = Math.round(monthIncome - monthExpense)
   const balanceColor = balance >= 0 ? 'var(--m1)' : 'var(--danger)'
 

@@ -5,7 +5,7 @@ import Skeleton from './ui/Skeleton'
 import Card from './ui/Card'
 
 export default function ProtectedRoute() {
-  const { session, loading } = useAuth()
+  const { mode, loading } = useAuth()
 
   if (loading) {
     return (
@@ -27,7 +27,7 @@ export default function ProtectedRoute() {
   }
 
   // 未配置 Supabase 时放行（本地开发模式），页面顶部会显示配置提示
-  if (!session && isSupabaseConfigured) {
+  if (mode === 'signed-out' && isSupabaseConfigured) {
     return <Navigate to="/login" replace />
   }
 

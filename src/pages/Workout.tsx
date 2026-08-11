@@ -1,25 +1,32 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Dumbbell, Plus, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Dumbbell, Pencil, Plus, Trash2, X } from 'lucide-react'
 import {
   useAddWorkoutExercise,
-  useAddWorkoutExercises,
   useAddWorkoutSession,
   useBodyMetrics,
+  useDeleteBodyMetric,
   useDeleteWorkoutExercise,
   useDeleteWorkoutSession,
   useUpsertBodyMetric,
   useWorkoutExercises,
-  useWorkoutSessions
+  useWorkoutSessions,
+  useWorkoutStats,
+  useUpdateWorkoutExercise,
+  useUpdateWorkoutSession,
+  exercisesKey,
+  metricsKey,
+  workoutListKey,
+  WORKOUT_PAGE_SIZE
 } from '../hooks/useWorkouts'
+import type { WorkoutPage } from '../hooks/useWorkouts'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
-import { todayStr } from '../utils/date'
-import { bodyPartFrequency, sessionsPerWeek, weeklyVolume, weightDelta } from '../utils/workoutStats'
+import { weightDelta } from '../utils/workoutStats'
 import type { BodyMetric, WorkoutExercise, WorkoutSession } from '../types'
 import Button from '../components/ui/Button'
-import Input from '../components/ui/Input'
+import Input, { Textarea } from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
 import Segmented from '../components/ui/Segmented'
 import Skeleton from '../components/ui/Skeleton'
@@ -27,6 +34,10 @@ import EmptyState from '../components/ui/EmptyState'
 import PageHeader from '../components/ui/PageHeader'
 import IconButton from '../components/ui/IconButton'
 import { cn } from '../lib/cn'
+import { useAuth } from '../hooks/useAuth'
+import QueryError from '../components/ui/QueryError'
+import { useCurrentDate } from '../hooks/useCurrentDate'
+import { useClampPage } from '../hooks/useClampPage'
 
 const BODY_PARTS = [
   { value: 'chest', label: '胸' },
@@ -88,31 +99,53 @@ function WeightChart({ metrics }: { metrics: BodyMetric[] }) {
   )
 }
 
-const EMPTY_EX = { name: '', sets: '', reps: '', weight: '' }
+const EMPTY_EX = { name: '', sets: '', reps: '', weight: '', note: '' }
 
 export default function Workout() {
-  const { data: sessions, isLoading } = useWorkoutSessions()
-  const { data: exercises } = useWorkoutExercises()
-  const { data: metrics } = useBodyMetrics()
+  const [page, setPage] = useState(0)
+  const today = useCurrentDate()
+  const sessionsQuery = useWorkoutSessions(page)
+  useClampPage(sessionsQuery.data?.total, WORKOUT_PAGE_SIZE, page, setPage)
+  const sessions = sessionsQuery.data?.items ?? []
+  const sessionIds = sessions.map((session) => session.id)
+  const exercisesQuery = useWorkoutExercises(sessionIds)
+  const metricsQuery = useBodyMetrics()
+  const statsQuery = useWorkoutStats(today, today.slice(0, 7))
+  const isLoading = sessionsQuery.isLoading
+  const { data: exercises } = exercisesQuery
+  const { data: metrics } = metricsQuery
   const addSession = useAddWorkoutSession()
   const deleteSession = useDeleteWorkoutSession()
+  const updateSession = useUpdateWorkoutSession()
   const addExercise = useAddWorkoutExercise()
-  const addExercises = useAddWorkoutExercises()
   const deleteExercise = useDeleteWorkoutExercise()
+  const updateExercise = useUpdateWorkoutExercise()
   const upsertMetric = useUpsertBodyMetric()
+  const deleteMetric = useDeleteBodyMetric()
   const push = useToastStore((s) => s.push)
   const touch = useTouch()
-  // 删除训练时快照其动作明细，撤销时重建
-  const exSnapshot = useRef(new Map<string, WorkoutExercise[]>())
+  const { userId } = useAuth()
 
   // 新增训练表单
-  const [sForm, setSForm] = useState({ date: todayStr(), body_part: 'chest' as string, duration: '' })
+  const [sForm, setSForm] = useState({ date: today, body_part: 'chest' as string, duration: '', note: '' })
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   // 动作表单：按 sessionId 展开
   const [exForms, setExForms] = useState<Record<string, typeof EMPTY_EX>>({})
+  const [editingExercise, setEditingExercise] = useState<{ id: string; sessionId: string } | null>(null)
   // 身体数据表单
-  const [mForm, setMForm] = useState({ date: todayStr(), weight: '', body_fat: '' })
+  const [mForm, setMForm] = useState({ date: today, weight: '', body_fat: '', note: '' })
+  const [editingMetricId, setEditingMetricId] = useState<string | null>(null)
+  const previousToday = useRef(today)
+  const sessionDateDirty = useRef(false)
+  const metricDateDirty = useRef(false)
 
-  const today = todayStr()
+  useEffect(() => {
+    const previous = previousToday.current
+    if (!sessionDateDirty.current) setSForm((form) => form.date === previous ? { ...form, date: today } : form)
+    if (!metricDateDirty.current) setMForm((form) => form.date === previous ? { ...form, date: today } : form)
+    previousToday.current = today
+  }, [today])
+
   const bySession = useMemo(() => {
     const map = new Map<string, WorkoutExercise[]>()
     for (const e of exercises ?? []) {
@@ -123,87 +156,140 @@ export default function Workout() {
     return map
   }, [exercises])
 
-  const weekVolume = weeklyVolume(exercises ?? [], sessions ?? [], today)
-  const weekCount = sessionsPerWeek(sessions ?? [], today, 1)[0]?.count ?? 0
-  const partFreq = bodyPartFrequency(sessions ?? [])
+  const weekVolume = statsQuery.data?.week_volume ?? 0
+  const weekCount = statsQuery.data?.week_sessions ?? 0
+  const partFreq = Object.fromEntries(statsQuery.data?.body_parts ?? [])
   const { latest, delta } = weightDelta(metrics ?? [])
 
-  const { requestDelete: requestDeleteSession } = useDeferredDelete<WorkoutSession>({
-    key: ['workouts'],
+  const { requestDelete: requestDeleteSession, isPending: isSessionDeletePending, remainingSeconds: sessionDeleteSeconds } = useDeferredDelete<WorkoutSession, WorkoutPage>({
+    key: workoutListKey(userId, page),
     label: (s) => `${s.date} 训练`,
-    remove: (id) => {
-      // 级联删除前快照该训练的动作明细，撤销时按新 session id 重建
-      exSnapshot.current.set(id, bySession.get(id) ?? [])
-      return deleteSession.mutateAsync(id)
-    },
-    restore: async (s) => {
-      const added = await addSession.mutateAsync({
-        date: s.date,
-        body_part: s.body_part,
-        duration_min: s.duration_min,
-        note: s.note
-      })
-      const exs = exSnapshot.current.get(s.id) ?? []
-      exSnapshot.current.delete(s.id)
-      if (exs.length > 0) {
-        await addExercises.mutateAsync(
-          exs.map((e) => ({
-            session_id: added.id,
-            name: e.name,
-            sets: e.sets,
-            reps: e.reps,
-            weight: e.weight,
-            note: e.note
-          }))
-        )
-      }
+    remove: (id) => deleteSession.mutateAsync(id),
+    cache: {
+      getItems: (cache) => cache?.items ?? [],
+      remove: (cache, id) => cache && { items: cache.items.filter((item) => item.id !== id), total: Math.max(0, cache.total - 1) },
+      restore: (cache) => cache
     }
   })
 
-  const { requestDelete: requestDeleteExercise } = useDeferredDelete<WorkoutExercise>({
-    key: ['workout-exercises'],
+  const exerciseCacheKey = [...exercisesKey(userId), sessionIds.join(',')] as const
+  const { requestDelete: requestDeleteExercise, isPending: isExerciseDeletePending, remainingSeconds: exerciseDeleteSeconds } = useDeferredDelete<WorkoutExercise>({
+    key: exerciseCacheKey,
     label: (e) => e.name,
-    remove: (id) => deleteExercise.mutateAsync(id),
-    restore: (e) => addExercise.mutate({ session_id: e.session_id, name: e.name, sets: e.sets, reps: e.reps, weight: e.weight, note: e.note })
+    remove: (id) => deleteExercise.mutateAsync(id)
   })
 
-  function handleAddSession(e: FormEvent) {
+  const { requestDelete: requestDeleteMetric, isPending: isMetricDeletePending, remainingSeconds: metricDeleteSeconds } = useDeferredDelete<BodyMetric>({
+    key: metricsKey(userId),
+    label: (m) => `${m.date} 身体数据`,
+    remove: (id) => deleteMetric.mutateAsync(id)
+  })
+
+  async function handleAddSession(e: FormEvent) {
     e.preventDefault()
-    addSession.mutate({
+    const duration = sForm.duration === '' ? null : Number(sForm.duration)
+    if (duration !== null && (!Number.isInteger(duration) || duration < 0)) {
+      push({ kind: 'error', message: '训练时长必须是非负整数' })
+      return
+    }
+    const payload = {
       date: sForm.date,
       body_part: sForm.body_part,
-      duration_min: sForm.duration ? Number(sForm.duration) : null,
-      note: null
-    })
-    push({ kind: 'success', message: '已添加训练' })
-    setSForm({ date: todayStr(), body_part: sForm.body_part, duration: '' })
+      duration_min: duration,
+      note: sForm.note.trim() || null
+    }
+    try {
+      if (editingSessionId) {
+        await updateSession.mutateAsync({ id: editingSessionId, patch: payload })
+        push({ kind: 'success', message: '训练已更新' })
+      } else {
+        await addSession.mutateAsync(payload)
+        push({ kind: 'success', message: '已添加训练' })
+      }
+      setSForm({ date: today, body_part: sForm.body_part, duration: '', note: '' })
+      sessionDateDirty.current = false
+      setEditingSessionId(null)
+    } catch {
+      push({ kind: 'error', message: editingSessionId ? '训练更新失败，请重试' : '训练添加失败，请重试' })
+    }
   }
 
-  function handleAddExercise(e: FormEvent, sessionId: string) {
+  async function handleAddExercise(e: FormEvent, sessionId: string) {
     e.preventDefault()
     const f = exForms[sessionId]
     const name = f?.name.trim()
     if (!name) return
-    addExercise.mutate({
+    const sets = Number(f?.sets || 0)
+    const reps = Number(f?.reps || 0)
+    const weight = Number(f?.weight || 0)
+    if (!Number.isInteger(sets) || !Number.isInteger(reps) || sets < 0 || reps < 0 || !Number.isFinite(weight) || weight < 0) {
+      push({ kind: 'error', message: '组数、次数需为非负整数，重量不得为负' })
+      return
+    }
+    const payload = {
       session_id: sessionId,
       name,
-      sets: Number(f?.sets) || 0,
-      reps: Number(f?.reps) || 0,
-      weight: Number(f?.weight) || 0,
-      note: null
-    })
-    push({ kind: 'success', message: `已添加动作「${name}」` })
-    setExForms((prev) => ({ ...prev, [sessionId]: EMPTY_EX }))
+      sets,
+      reps,
+      weight,
+      note: f?.note.trim() || null
+    }
+    try {
+      const editingForSession = editingExercise?.sessionId === sessionId ? editingExercise : null
+      if (editingForSession) {
+        const { session_id: _sessionId, ...patch } = payload
+        await updateExercise.mutateAsync({ id: editingForSession.id, patch })
+        push({ kind: 'success', message: `已更新动作「${name}」` })
+      } else {
+        await addExercise.mutateAsync(payload)
+        push({ kind: 'success', message: `已添加动作「${name}」` })
+      }
+      setExForms((prev) => ({ ...prev, [sessionId]: EMPTY_EX }))
+      setEditingExercise(null)
+    } catch {
+      push({ kind: 'error', message: editingExercise?.sessionId === sessionId ? '动作更新失败，请重试' : '动作添加失败，请重试' })
+    }
   }
 
-  function handleSaveMetric(e: FormEvent) {
+  async function handleSaveMetric(e: FormEvent) {
     e.preventDefault()
-    const weight = mForm.weight ? Number(mForm.weight) : null
-    const body_fat = mForm.body_fat ? Number(mForm.body_fat) : null
-    if (weight === null && body_fat === null) return
-    upsertMetric.mutate({ date: mForm.date, weight, body_fat })
-    push({ kind: 'success', message: '身体数据已保存' })
-    setMForm({ date: todayStr(), weight: '', body_fat: '' })
+    if (!mForm.weight && !mForm.body_fat && !mForm.note.trim()) return
+    if ([mForm.weight, mForm.body_fat].some((value) => value !== '' && (!Number.isFinite(Number(value)) || Number(value) < 0))) {
+      push({ kind: 'error', message: '体重和体脂不得为负' })
+      return
+    }
+    const payload: { date: string; weight?: number | null; body_fat?: number | null; note?: string | null } = { date: mForm.date }
+    if (editingMetricId || mForm.weight) payload.weight = mForm.weight ? Number(mForm.weight) : null
+    if (editingMetricId || mForm.body_fat) payload.body_fat = mForm.body_fat ? Number(mForm.body_fat) : null
+    if (editingMetricId || mForm.note.trim()) payload.note = mForm.note.trim() || null
+    try {
+      await upsertMetric.mutateAsync(payload)
+      push({ kind: 'success', message: '身体数据已保存' })
+      setMForm({ date: today, weight: '', body_fat: '', note: '' })
+      metricDateDirty.current = false
+      setEditingMetricId(null)
+    } catch {
+      push({ kind: 'error', message: '身体数据保存失败，请重试' })
+    }
+  }
+
+  function editSession(session: WorkoutSession) {
+    sessionDateDirty.current = true
+    setEditingSessionId(session.id)
+    setSForm({ date: session.date, body_part: session.body_part, duration: session.duration_min?.toString() ?? '', note: session.note ?? '' })
+  }
+
+  function editExercise(exercise: WorkoutExercise) {
+    setEditingExercise({ id: exercise.id, sessionId: exercise.session_id })
+    setExForms((prev) => ({ ...prev, [exercise.session_id]: {
+      name: exercise.name, sets: String(exercise.sets), reps: String(exercise.reps), weight: String(exercise.weight), note: exercise.note ?? ''
+    } }))
+  }
+
+  function editMetric(metric: BodyMetric) {
+    metricDateDirty.current = true
+    setEditingMetricId(metric.id)
+    setMForm({ date: metric.date, weight: metric.weight?.toString() ?? '', body_fat: metric.body_fat?.toString() ?? '', note: metric.note ?? '' })
   }
 
   return (
@@ -213,6 +299,9 @@ export default function Workout() {
         title="健身记录"
         description="每一次训练都算数。"
       />
+      {(sessionsQuery.isError || exercisesQuery.isError || metricsQuery.isError || statsQuery.isError) && (
+        <QueryError onRetry={() => { sessionsQuery.refetch(); exercisesQuery.refetch(); metricsQuery.refetch(); statsQuery.refetch() }} />
+      )}
 
       {/* 本周概览 */}
       <div className="grid grid-cols-3 gap-3">
@@ -257,44 +346,73 @@ export default function Workout() {
         </div>
         <form onSubmit={handleSaveMetric} className="mt-3 flex flex-wrap items-end gap-2">
           <div>
-            <label className="mb-1 block text-[10px] text-ink-3">日期</label>
+            <label htmlFor="body-metric-date" className="mb-1 block text-[10px] text-ink-3">日期</label>
             <Input
+              id="body-metric-date"
               type="date"
+              disabled={Boolean(editingMetricId)}
               value={mForm.date}
-              onChange={(e) => setMForm({ ...mForm, date: e.target.value })}
+              onChange={(e) => { metricDateDirty.current = true; setMForm({ ...mForm, date: e.target.value }) }}
               className="w-36 tabular-nums"
             />
           </div>
           <div>
-            <label className="mb-1 block text-[10px] text-ink-3">体重 (kg)</label>
+            <label htmlFor="body-metric-weight" className="mb-1 block text-[10px] text-ink-3">体重 (kg)</label>
             <Input
+              id="body-metric-weight"
               type="number"
               step="0.1"
               min="0"
               value={mForm.weight}
               onChange={(e) => setMForm({ ...mForm, weight: e.target.value })}
               placeholder="60.0"
+              max="1000"
               className="w-28 tabular-nums"
             />
           </div>
           <div>
-            <label className="mb-1 block text-[10px] text-ink-3">体脂 (%)</label>
+            <label htmlFor="body-metric-fat" className="mb-1 block text-[10px] text-ink-3">体脂 (%)</label>
             <Input
+              id="body-metric-fat"
               type="number"
               step="0.1"
               min="0"
               value={mForm.body_fat}
               onChange={(e) => setMForm({ ...mForm, body_fat: e.target.value })}
               placeholder="15.0"
+              max="100"
               className="w-28 tabular-nums"
             />
           </div>
-          <Button type="submit" disabled={!mForm.weight && !mForm.body_fat}>
+          <Input
+            value={mForm.note}
+            onChange={(e) => setMForm({ ...mForm, note: e.target.value })}
+            placeholder="备注"
+            maxLength={100000}
+            className="min-w-32 flex-1"
+          />
+          <Button type="submit" disabled={(!mForm.weight && !mForm.body_fat && !mForm.note.trim()) || upsertMetric.isPending}>
             <Plus size={16} />
-            保存
+            {editingMetricId ? '更新' : '保存'}
           </Button>
+          {editingMetricId && <IconButton type="button" onClick={() => { metricDateDirty.current = false; setEditingMetricId(null); setMForm({ date: today, weight: '', body_fat: '', note: '' }) }} aria-label="取消编辑"><X size={16} /></IconButton>}
         </form>
         <WeightChart metrics={metrics ?? []} />
+        {(metrics?.length ?? 0) > 0 && (
+          <ul className="mt-3 divide-y divide-border border-t border-border">
+            {[...(metrics ?? [])].slice(-8).reverse().map((metric) => (
+              <li key={metric.id} className={cn('flex items-center gap-3 py-2 text-xs', isMetricDeletePending(metric.id) && 'opacity-60')}>
+                <span className="w-20 text-ink-3 tabular-nums">{metric.date.slice(5)}</span>
+                <span className="text-ink">{metric.weight !== null ? `${metric.weight}kg` : '体重 -'}</span>
+                <span className="text-ink-2">{metric.body_fat !== null ? `体脂 ${metric.body_fat}%` : '体脂 -'}</span>
+                {metric.note && <span className="min-w-0 flex-1 truncate text-ink-3">{metric.note}</span>}
+                {isMetricDeletePending(metric.id) && <span className="text-[10px] text-danger">待删除 {metricDeleteSeconds(metric.id)}s</span>}
+                <IconButton size="sm" onClick={() => editMetric(metric)} disabled={isMetricDeletePending(metric.id)} aria-label="编辑身体数据"><Pencil size={14} /></IconButton>
+                <IconButton size="sm" onClick={() => requestDeleteMetric(metric)} disabled={isMetricDeletePending(metric.id)} aria-label="删除身体数据"><Trash2 size={14} /></IconButton>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {/* 新增训练 */}
@@ -304,7 +422,7 @@ export default function Workout() {
             <Input
               type="date"
               value={sForm.date}
-              onChange={(e) => setSForm({ ...sForm, date: e.target.value })}
+              onChange={(e) => { sessionDateDirty.current = true; setSForm({ ...sForm, date: e.target.value }) }}
               aria-label="训练日期"
               className="w-40 tabular-nums"
             />
@@ -314,19 +432,24 @@ export default function Workout() {
               value={sForm.duration}
               onChange={(e) => setSForm({ ...sForm, duration: e.target.value })}
               placeholder="时长(分钟)"
+              max="1440"
               className="w-32 tabular-nums"
             />
           </div>
-          <Button type="submit">
+          <div className="flex gap-2">
+          <Button type="submit" disabled={addSession.isPending || updateSession.isPending}>
             <Plus size={16} />
-            添加训练
+            {editingSessionId ? '保存训练' : '添加训练'}
           </Button>
+          {editingSessionId && <IconButton type="button" onClick={() => { sessionDateDirty.current = false; setEditingSessionId(null); setSForm({ date: today, body_part: sForm.body_part, duration: '', note: '' }) }} aria-label="取消编辑"><X size={16} /></IconButton>}
+          </div>
         </div>
         <Segmented
           value={sForm.body_part}
           onChange={(v) => setSForm({ ...sForm, body_part: v })}
           options={[...BODY_PARTS]}
         />
+        <Textarea value={sForm.note} onChange={(e) => setSForm({ ...sForm, note: e.target.value })} placeholder="训练备注（可选）" rows={2} maxLength={100000} />
       </form>
 
       {/* 训练列表 */}
@@ -336,7 +459,7 @@ export default function Workout() {
             <Skeleton key={i} className="h-24 w-full" />
           ))}
         </div>
-      ) : !sessions?.length ? (
+      ) : !sessions.length ? (
         <EmptyState
           icon={<Dumbbell size={22} />}
           title="还没有训练记录"
@@ -350,7 +473,7 @@ export default function Workout() {
             return (
               <li
                 key={s.id}
-                className="group rounded-2xl border border-border bg-surface p-4 transition-colors duration-150 hover:bg-hover"
+                className={cn('group rounded-2xl border bg-surface p-4 transition-colors duration-150 hover:bg-hover', isSessionDeletePending(s.id) ? 'border-danger/40 opacity-60' : 'border-border')}
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
@@ -360,25 +483,36 @@ export default function Workout() {
                     <Badge variant="accent">{BODY_PART_LABEL[s.body_part] ?? s.body_part}</Badge>
                     {s.duration_min && <span className="text-xs text-ink-3 tabular-nums">{s.duration_min} 分钟</span>}
                     <span className="text-xs text-ink-3 tabular-nums">{list.length} 个动作</span>
+                    {isSessionDeletePending(s.id) && <span className="text-[10px] font-medium text-danger">待删除 {sessionDeleteSeconds(s.id)}s</span>}
                   </div>
                   <div className={cn('flex items-center gap-0.5', touch ? '' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100')}>
-                    <IconButton size="sm" onClick={() => requestDeleteSession(s)} aria-label="删除训练">
+                    <IconButton size="sm" onClick={() => editSession(s)} disabled={isSessionDeletePending(s.id)} aria-label="编辑训练">
+                      <Pencil size={15} />
+                    </IconButton>
+                    <IconButton size="sm" onClick={() => requestDeleteSession(s)} disabled={isSessionDeletePending(s.id)} aria-label="删除训练">
                       <Trash2 size={15} />
                     </IconButton>
                   </div>
                 </div>
+                {s.note && <p className="mt-1 text-xs text-ink-3">{s.note}</p>}
 
                 {list.length > 0 && (
                   <ul className="mt-3 divide-y divide-border">
                     {list.map((ex) => (
-                      <li key={ex.id} className="flex items-center gap-3 py-1.5 text-sm">
+                      <li key={ex.id} className={cn('flex items-center gap-3 py-1.5 text-sm', isExerciseDeletePending(ex.id) && 'opacity-60')}>
                         <span className="flex-1 text-ink">{ex.name}</span>
                         <span className="text-ink-2 tabular-nums">
                           {ex.sets} 组 × {ex.reps} 次 × {ex.weight}kg
                         </span>
+                        {ex.note && <span className="max-w-28 truncate text-xs text-ink-3">{ex.note}</span>}
+                        {isExerciseDeletePending(ex.id) && <span className="text-[10px] text-danger">待删除 {exerciseDeleteSeconds(ex.id)}s</span>}
+                        <IconButton size="sm" onClick={() => editExercise(ex)} disabled={isExerciseDeletePending(ex.id)} aria-label="编辑动作" className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}>
+                          <Pencil size={14} />
+                        </IconButton>
                         <IconButton
                           size="sm"
                           onClick={() => requestDeleteExercise(ex)}
+                          disabled={isExerciseDeletePending(ex.id)}
                           aria-label="删除动作"
                           className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}
                         >
@@ -397,6 +531,7 @@ export default function Workout() {
                     value={exForm.name}
                     onChange={(e) => setExForms((prev) => ({ ...prev, [s.id]: { ...(prev[s.id] ?? EMPTY_EX), name: e.target.value } }))}
                     placeholder="动作名，如：卧推"
+                    maxLength={200}
                     className="min-w-36 flex-1"
                   />
                   <Input
@@ -405,6 +540,7 @@ export default function Workout() {
                     value={exForm.sets}
                     onChange={(e) => setExForms((prev) => ({ ...prev, [s.id]: { ...(prev[s.id] ?? EMPTY_EX), sets: e.target.value } }))}
                     placeholder="组"
+                    max="10000"
                     className="w-16 tabular-nums"
                   />
                   <Input
@@ -413,6 +549,7 @@ export default function Workout() {
                     value={exForm.reps}
                     onChange={(e) => setExForms((prev) => ({ ...prev, [s.id]: { ...(prev[s.id] ?? EMPTY_EX), reps: e.target.value } }))}
                     placeholder="次"
+                    max="10000"
                     className="w-16 tabular-nums"
                   />
                   <Input
@@ -422,17 +559,33 @@ export default function Workout() {
                     value={exForm.weight}
                     onChange={(e) => setExForms((prev) => ({ ...prev, [s.id]: { ...(prev[s.id] ?? EMPTY_EX), weight: e.target.value } }))}
                     placeholder="kg"
+                    max="10000"
                     className="w-20 tabular-nums"
                   />
-                  <Button type="submit" size="sm" variant="secondary" disabled={!exForm.name.trim()}>
+                  <Input
+                    value={exForm.note}
+                    onChange={(e) => setExForms((prev) => ({ ...prev, [s.id]: { ...(prev[s.id] ?? EMPTY_EX), note: e.target.value } }))}
+                    placeholder="备注"
+                    maxLength={100000}
+                    className="min-w-24 flex-1"
+                  />
+                  <Button type="submit" size="sm" variant="secondary" disabled={isSessionDeletePending(s.id) || !exForm.name.trim() || addExercise.isPending || updateExercise.isPending}>
                     <Plus size={14} />
-                    添加
+                    {editingExercise?.sessionId === s.id ? '保存' : '添加'}
                   </Button>
+                  {editingExercise?.sessionId === s.id && <IconButton type="button" size="sm" onClick={() => { setEditingExercise(null); setExForms((prev) => ({ ...prev, [s.id]: EMPTY_EX })) }} aria-label="取消编辑"><X size={14} /></IconButton>}
                 </form>
               </li>
             )
           })}
         </ul>
+      )}
+      {(sessionsQuery.data?.total ?? 0) > WORKOUT_PAGE_SIZE && (
+        <div className="flex items-center justify-center gap-3">
+          <IconButton onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0 || sessionsQuery.isFetching} aria-label="上一页"><ChevronLeft size={17} /></IconButton>
+          <span className="text-xs text-ink-3 tabular-nums">第 {page + 1} / {Math.ceil((sessionsQuery.data?.total ?? 0) / WORKOUT_PAGE_SIZE)} 页</span>
+          <IconButton onClick={() => setPage((value) => value + 1)} disabled={(page + 1) * WORKOUT_PAGE_SIZE >= (sessionsQuery.data?.total ?? 0) || sessionsQuery.isFetching} aria-label="下一页"><ChevronRight size={17} /></IconButton>
+        </div>
       )}
     </div>
   )

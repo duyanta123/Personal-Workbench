@@ -1,31 +1,50 @@
 import { useNavigate } from 'react-router-dom'
 import { Check, Star } from 'lucide-react'
-import type { Goal, Habit, HabitLog, Todo } from '../../types'
 import { useToggleTodo } from '../../hooks/useTodos'
 import { useToggleHabitLog } from '../../hooks/useHabits'
 import { useIncrementGoal } from '../../hooks/useGoals'
-import { todayStr } from '../../utils/date'
 import { cn } from '../../lib/cn'
-
-interface FocusListProps {
-  todos: Todo[]
-  habits: Habit[]
-  logs: HabitLog[]
-  goals: Goal[]
-}
+import { useToastStore } from '../../stores/toast'
+import { useFocusItems } from '../../hooks/useFocusItems'
+import { useCurrentDate } from '../../hooks/useCurrentDate'
 
 /** 今日聚焦：聚合各模块置顶项，支持行内快速操作 */
-export default function FocusList({ todos, habits, logs, goals }: FocusListProps) {
+export default function FocusList() {
   const navigate = useNavigate()
+  const today = useCurrentDate()
+  const { data } = useFocusItems(today)
   const toggleTodo = useToggleTodo()
   const toggleHabit = useToggleHabitLog()
   const incGoal = useIncrementGoal()
-  const today = todayStr()
+  const push = useToastStore((s) => s.push)
 
-  const doneToday = new Set(logs.filter((l) => l.log_date === today).map((l) => l.habit_id))
-  const pinnedTodos = todos.filter((t) => t.pinned)
-  const pinnedHabits = habits.filter((h) => h.pinned)
-  const pinnedGoals = goals.filter((g) => g.pinned)
+  async function toggleTodoSafe(id: string, done: boolean) {
+    try {
+      await toggleTodo.mutateAsync({ id, done })
+    } catch {
+      push({ kind: 'error', message: '待办更新失败，请重试' })
+    }
+  }
+
+  async function toggleHabitSafe(id: string, done: boolean) {
+    try {
+      await toggleHabit.mutateAsync({ habitId: id, date: today, done })
+    } catch {
+      push({ kind: 'error', message: '习惯打卡失败，请重试' })
+    }
+  }
+
+  async function incrementGoalSafe(id: string) {
+    try {
+      await incGoal.mutateAsync(id)
+    } catch {
+      push({ kind: 'error', message: '目标进度更新失败，请重试' })
+    }
+  }
+
+  const pinnedTodos = data?.todos ?? []
+  const pinnedHabits = data?.habits ?? []
+  const pinnedGoals = data?.goals ?? []
   const total = pinnedTodos.length + pinnedHabits.length + pinnedGoals.length
 
   if (total === 0) {
@@ -53,7 +72,8 @@ export default function FocusList({ todos, habits, logs, goals }: FocusListProps
         {pinnedTodos.map((t) => (
           <li key={`t-${t.id}`} className="flex items-center gap-2.5">
             <button
-              onClick={() => toggleTodo.mutate({ id: t.id, done: !t.done })}
+              onClick={() => void toggleTodoSafe(t.id, !t.done)}
+              disabled={toggleTodo.isPending}
               aria-label={t.done ? '恢复未完成' : '切换完成'}
               className={cn(
                 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-150',
@@ -76,11 +96,12 @@ export default function FocusList({ todos, habits, logs, goals }: FocusListProps
           </li>
         ))}
         {pinnedHabits.map((h) => {
-          const on = doneToday.has(h.id)
+          const on = h.done_today
           return (
             <li key={`h-${h.id}`} className="flex items-center gap-2.5">
               <button
-                onClick={() => toggleHabit.mutate(h.id)}
+                onClick={() => void toggleHabitSafe(h.id, !on)}
+                disabled={toggleHabit.isPendingFor(h.id, today)}
                 aria-label={on ? '取消今日打卡' : '今日打卡'}
                 className={cn(
                   'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-150',
@@ -117,9 +138,10 @@ export default function FocusList({ todos, habits, logs, goals }: FocusListProps
                 {g.current}/{g.target}
               </span>
               <button
-                onClick={() => incGoal.mutate(g.id)}
+                onClick={() => void incrementGoalSafe(g.id)}
+                disabled={g.current >= g.target || incGoal.isPending}
                 aria-label="进度 +1"
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border text-sm text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border text-sm text-ink-2 transition-colors hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
               >
                 +
               </button>

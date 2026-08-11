@@ -1,9 +1,10 @@
 import { Check, Flame } from 'lucide-react'
 import type { Habit, HabitLog } from '../../types'
 import { useToggleHabitLogDate } from '../../hooks/useHabits'
-import { weekDates } from '../../utils/weekly'
+import { weekCompletionRate, weekDates } from '../../utils/weekly'
 import { todayStr } from '../../utils/date'
 import { cn } from '../../lib/cn'
+import { useToastStore } from '../../stores/toast'
 
 const WEEK_CN = ['一', '二', '三', '四', '五', '六', '日']
 const DOT_BG = ['bg-m1', 'bg-m2', 'bg-m3', 'bg-m4', 'bg-m5']
@@ -17,10 +18,20 @@ interface HabitWeekTableProps {
 /** 本周习惯追踪表：周一~周日 + 完成率，点击格子打卡/取消 */
 export default function HabitWeekTable({ habits, logs }: HabitWeekTableProps) {
   const toggle = useToggleHabitLogDate()
+  const push = useToastStore((s) => s.push)
   const days = weekDates()
   const today = todayStr()
   const tIdx = days.indexOf(today)
+  const elapsedDays = tIdx >= 0 ? tIdx + 1 : 7
   const weekEndLabel = `周${WEEK_CN[(new Date().getDay() + 6) % 7]}`
+
+  async function toggleDate(habitId: string, date: string) {
+    try {
+      await toggle.mutateAsync({ habitId, date })
+    } catch {
+      push({ kind: 'error', message: '习惯打卡失败，请重试' })
+    }
+  }
 
   const byHabit = new Map<string, Set<string>>()
   for (const l of logs) {
@@ -88,14 +99,15 @@ export default function HabitWeekTable({ habits, logs }: HabitWeekTableProps) {
                   </td>
                   {days.map((d, i) => {
                     const on = logged.has(d)
-                    if (on) cnt++
+                    if (on && d <= today) cnt++
                     const future = d > today
                     return (
                       <td key={d} className={cn('py-1', i === tIdx && 'rounded-lg bg-accent-2/50')}>
                         <button
                           type="button"
-                          disabled={future}
-                          onClick={() => toggle.mutate({ habitId: h.id, date: d })}
+                          disabled={future || toggle.isPendingFor(h.id, d)}
+                          onClick={() => void toggleDate(h.id, d)}
+                          aria-busy={toggle.isPending}
                           aria-label={`${h.name} 周${WEEK_CN[i]}打卡`}
                           className={cn(
                             'mx-auto flex h-6 w-6 items-center justify-center rounded-lg transition-colors duration-150',
@@ -117,7 +129,7 @@ export default function HabitWeekTable({ habits, logs }: HabitWeekTableProps) {
                       TX[ri % TX.length]
                     )}
                   >
-                    {Math.round((cnt / 7) * 100)}%
+                    {weekCompletionRate(cnt, elapsedDays)}%
                   </td>
                 </tr>
               )

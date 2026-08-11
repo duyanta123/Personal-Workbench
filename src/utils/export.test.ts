@@ -16,6 +16,11 @@ describe('buildCSV', () => {
     const csv = buildCSV(['a', 'b'], [[null, undefined]])
     expect(csv).toBe('a,b\n,')
   })
+
+  it('阻止公式注入但保留真正的数字', () => {
+    const csv = buildCSV(['值'], [[' =SUM(A1:A2)'], ['\tcmd'], ['@x'], [-12, 12]])
+    expect(csv).toBe("值\n' =SUM(A1:A2)\n'\tcmd\n'@x\n-12,12")
+  })
 })
 
 describe('buildJSON', () => {

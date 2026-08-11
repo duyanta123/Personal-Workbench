@@ -1,29 +1,23 @@
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Code2, Flame, Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Code2, Flame, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import {
   useAddProblem,
   useDeleteProblem,
   useProblems,
+  usePracticeStats,
+  practiceListKey,
+  PRACTICE_PAGE_SIZE,
   useUpdateProblem
 } from '../hooks/useProblems'
-import type { NewProblem } from '../hooks/useProblems'
+import type { NewProblem, PracticePage } from '../hooks/useProblems'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
-import { monthPrefix, todayStr } from '../utils/date'
-import { practiceRestoreInput } from '../utils/restore'
 import { buildMonthGrid } from '../utils/calendar'
-import {
-  buildHeatmap,
-  computeSolvedStreak,
-  countByDifficulty,
-  countByPlatform,
-  uniqueTags
-} from '../utils/practiceStats'
 import type { PracticeDifficulty, PracticeProblem, PracticeStatus } from '../types'
 import Button from '../components/ui/Button'
-import Input from '../components/ui/Input'
+import Input, { Textarea } from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
 import Segmented from '../components/ui/Segmented'
 import Skeleton from '../components/ui/Skeleton'
@@ -33,6 +27,11 @@ import IconButton from '../components/ui/IconButton'
 import Ring from '../components/ui/Ring'
 import SideCard from '../components/ui/SideCard'
 import { cn } from '../lib/cn'
+import QueryError from '../components/ui/QueryError'
+import { useAuth } from '../hooks/useAuth'
+import { useCurrentDate } from '../hooks/useCurrentDate'
+import { LIMITS, parseTags, requireLength, safeExternalUrl, safeExternalUrlOrNull } from '../utils/validation'
+import { useClampPage } from '../hooks/useClampPage'
 
 const WEEK = ['一', '二', '三', '四', '五', '六', '日']
 
@@ -73,43 +72,54 @@ const EMPTY_FORM = {
   difficulty: 'medium' as PracticeDifficulty,
   status: 'todo' as PracticeStatus,
   tags: '',
-  url: ''
+  url: '',
+  note: ''
 }
 
 export default function Practice() {
-  const { data: problems, isLoading } = useProblems()
   const addProblem = useAddProblem()
   const updateProblem = useUpdateProblem()
   const deleteProblem = useDeleteProblem()
   const push = useToastStore((s) => s.push)
   const touch = useTouch()
+  const { userId } = useAuth()
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query.trim())
+  const [page, setPage] = useState(0)
   const [platformFilter, setPlatformFilter] = useState<string | null>(null)
   const [diffFilter, setDiffFilter] = useState<PracticeDifficulty | null>(null)
   const [tagFilter, setTagFilter] = useState<string | null>(null)
 
-  const today = todayStr()
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth() + 1
+  const today = useCurrentDate()
+  const monthPrefix = today.slice(0, 7)
+  const [year, month] = monthPrefix.split('-').map(Number)
+  const problemsQuery = useProblems({ page, query: deferredQuery, platform: platformFilter, difficulty: diffFilter, tag: tagFilter })
+  useClampPage(problemsQuery.data?.total, PRACTICE_PAGE_SIZE, page, setPage)
+  const problems = problemsQuery.data?.items ?? []
+  const isLoading = problemsQuery.isLoading
+  const statsQuery = usePracticeStats(today, monthPrefix)
   const grid = buildMonthGrid(year, month)
   const heatmap = useMemo(() => {
-    const map = new Map(buildHeatmap(problems ?? [], year, month).map((d) => [d.date, d.count]))
+    const map = new Map((statsQuery.data?.heatmap ?? []).map((d) => [d.date, d.count]))
     return map
-  }, [problems, year, month])
+  }, [statsQuery.data?.heatmap])
 
-  const monthSolved = (problems ?? []).filter((p) => p.solved_at?.startsWith(monthPrefix())).length
-  const streak = computeSolvedStreak(problems ?? [], today)
-  const byDiff = countByDifficulty(problems ?? [])
-  const allTags = uniqueTags(problems ?? [])
-  const acCount = (problems ?? []).filter((p) => p.status === 'ac_solo' || p.status === 'ac_hint').length
-  const todaySolved = (problems ?? []).filter((p) => p.solved_at === today).length
+  const monthSolved = statsQuery.data?.month_solved ?? 0
+  const streak = statsQuery.data?.streak ?? 0
+  const byDiff = useMemo(
+    () => statsQuery.data?.difficulty ?? { easy: 0, medium: 0, hard: 0 },
+    [statsQuery.data?.difficulty]
+  )
+  const allTags = statsQuery.data?.tags ?? []
+  const acCount = statsQuery.data?.ac_count ?? 0
+  const todaySolved = statsQuery.data?.today_solved ?? 0
+  const problemTotal = statsQuery.data?.total ?? 0
 
   // 侧栏统计
-  const acRate = (problems?.length ?? 0) ? Math.round((acCount / (problems?.length ?? 1)) * 100) : 0
+  const acRate = problemTotal ? Math.round((acCount / problemTotal) * 100) : 0
   const diffRows = useMemo(
     () =>
       ([
@@ -119,35 +129,21 @@ export default function Practice() {
       ] as const),
     [byDiff]
   )
-  const platformRows = useMemo(() => {
-    const byP = countByPlatform(problems ?? [])
-    return Object.entries(byP).sort((a, b) => b[1] - a[1]).slice(0, 6)
-  }, [problems])
+  const platformRows = (statsQuery.data?.platforms ?? []).slice(0, 6)
+  const filtered = problems
 
-  const searched = useMemo(() => {
-    if (!query) return problems ?? []
-    const q = query.toLowerCase()
-    return (problems ?? []).filter(
-      (p) => p.title.toLowerCase().includes(q) || p.tags.some((t) => t.includes(q))
-    )
-  }, [problems, query])
+  useEffect(() => setPage(0), [query, platformFilter, diffFilter, tagFilter])
 
-  const filtered = useMemo(
-    () =>
-      searched.filter(
-        (p) =>
-          (!platformFilter || p.platform === platformFilter) &&
-          (!diffFilter || p.difficulty === diffFilter) &&
-          (!tagFilter || p.tags.includes(tagFilter))
-      ),
-    [searched, platformFilter, diffFilter, tagFilter]
-  )
-
-  const { requestDelete } = useDeferredDelete<PracticeProblem>({
-    key: ['problems'],
+  const pageOptions = { page, query: deferredQuery, platform: platformFilter, difficulty: diffFilter, tag: tagFilter }
+  const { requestDelete, isPending: isDeletePending, remainingSeconds } = useDeferredDelete<PracticeProblem, PracticePage>({
+    key: practiceListKey(userId, pageOptions),
     label: (p) => p.title,
     remove: (id) => deleteProblem.mutateAsync(id),
-    restore: (p) => addProblem.mutate(practiceRestoreInput(p))
+    cache: {
+      getItems: (cache) => cache?.items ?? [],
+      remove: (cache, id) => cache && { items: cache.items.filter((item) => item.id !== id), total: Math.max(0, cache.total - 1) },
+      restore: (cache) => cache
+    }
   })
 
   function reset() {
@@ -155,31 +151,30 @@ export default function Practice() {
     setEditingId(null)
   }
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    const title = form.title.trim()
-    if (!title) return
-    const payload: NewProblem = {
-      title,
-      platform: form.platform,
-      difficulty: form.difficulty,
-      status: form.status,
-      tags: form.tags
-        .split(/[,，]/)
-        .map((t) => t.trim())
-        .filter(Boolean),
-      url: form.url.trim() || null,
-      // 仅新增时写入空 note；编辑时保留已有 note
-      note: editingId ? undefined : null
+    try {
+      const title = requireLength(form.title.trim(), LIMITS.title, '题目名称', 1)
+      const payload: NewProblem = {
+        title,
+        platform: form.platform,
+        difficulty: form.difficulty,
+        status: form.status,
+        tags: parseTags(form.tags),
+        url: safeExternalUrl(form.url),
+        note: form.note.trim() ? requireLength(form.note.trim(), LIMITS.body, '解题思路') : null
+      }
+      if (editingId) {
+        await updateProblem.mutateAsync({ id: editingId, patch: payload })
+        push({ kind: 'success', message: '已保存修改' })
+      } else {
+        await addProblem.mutateAsync(payload)
+        push({ kind: 'success', message: `已添加「${title}」` })
+      }
+      reset()
+    } catch (error) {
+      push({ kind: 'error', message: error instanceof Error ? error.message : editingId ? '题目更新失败，请重试' : '题目添加失败，请重试' })
     }
-    if (editingId) {
-      updateProblem.mutate({ id: editingId, patch: payload })
-      push({ kind: 'success', message: '已保存修改' })
-    } else {
-      addProblem.mutate(payload)
-      push({ kind: 'success', message: `已添加「${title}」` })
-    }
-    reset()
   }
 
   function startEdit(p: PracticeProblem) {
@@ -190,16 +185,21 @@ export default function Practice() {
       difficulty: p.difficulty,
       status: p.status,
       tags: p.tags.join(', '),
-      url: p.url ?? ''
+      url: p.url ?? '',
+      note: p.note ?? ''
     })
   }
 
   /** 点击状态徽章循环切换 */
-  function cycleStatus(p: PracticeProblem) {
+  async function cycleStatus(p: PracticeProblem) {
     const order: PracticeStatus[] = ['todo', 'doing', 'ac_solo', 'ac_hint', 'failed']
     const next = order[(order.indexOf(p.status) + 1) % order.length]
-    updateProblem.mutate({ id: p.id, patch: { status: next } })
-    push({ kind: 'info', message: `「${p.title}」→ ${STATUS_META[next].label}` })
+    try {
+      await updateProblem.mutateAsync({ id: p.id, patch: { status: next } })
+      push({ kind: 'info', message: `「${p.title}」→ ${STATUS_META[next].label}` })
+    } catch {
+      push({ kind: 'error', message: '状态更新失败，请重试' })
+    }
   }
 
   return (
@@ -209,6 +209,7 @@ export default function Practice() {
         title="刷题记录"
         description="算法之路，每天进步一点。"
       />
+      {(problemsQuery.isError || statsQuery.isError) && <QueryError onRetry={() => { problemsQuery.refetch(); statsQuery.refetch() }} />}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-4">
@@ -250,6 +251,7 @@ export default function Practice() {
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
           placeholder="题目名称，如：两数之和"
+          maxLength={LIMITS.title}
         />
         <div className="flex flex-wrap items-center gap-3">
           <Segmented
@@ -283,12 +285,14 @@ export default function Practice() {
             value={form.tags}
             onChange={(e) => setForm({ ...form, tags: e.target.value })}
             placeholder="标签，用逗号分隔（可选）"
+            maxLength={LIMITS.tags * (LIMITS.tag + 1)}
             className="min-w-40 flex-1"
           />
           <Input
             value={form.url}
             onChange={(e) => setForm({ ...form, url: e.target.value })}
             placeholder="题目链接（可选）"
+            maxLength={LIMITS.url}
             className="min-w-40 flex-1"
           />
           <div className="flex gap-2">
@@ -297,12 +301,19 @@ export default function Practice() {
                 取消
               </Button>
             )}
-            <Button type="submit" disabled={!form.title.trim()}>
+            <Button type="submit" disabled={!form.title.trim() || addProblem.isPending || updateProblem.isPending}>
               <Plus size={16} />
               {editingId ? '保存修改' : '添加'}
             </Button>
           </div>
         </div>
+        <Textarea
+          value={form.note}
+          onChange={(e) => setForm({ ...form, note: e.target.value })}
+          placeholder="解题思路或复盘（可选）"
+          rows={3}
+          maxLength={LIMITS.body}
+        />
       </form>
 
       {/* 筛选 */}
@@ -391,14 +402,14 @@ export default function Practice() {
           {filtered.map((p) => (
             <li
               key={p.id}
-              className="group flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3 transition-colors duration-150 hover:bg-hover"
+              className={cn('group flex items-center gap-3 rounded-2xl border bg-surface px-4 py-3 transition-colors duration-150 hover:bg-hover', isDeletePending(p.id) ? 'border-danger/40 opacity-60' : 'border-border')}
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-ink">{p.title}</span>
-                  {p.url && (
+                  {safeExternalUrlOrNull(p.url) && (
                     <a
-                      href={p.url}
+                      href={safeExternalUrlOrNull(p.url)!}
                       target="_blank"
                       rel="noreferrer"
                       className="shrink-0 text-xs text-ink-3 underline-offset-2 hover:text-accent hover:underline"
@@ -415,6 +426,7 @@ export default function Practice() {
                   <button
                     type="button"
                     onClick={() => cycleStatus(p)}
+                    disabled={isDeletePending(p.id)}
                     title="点击切换状态"
                     className="cursor-pointer"
                   >
@@ -429,6 +441,8 @@ export default function Practice() {
                     <span className="text-[11px] text-ink-3 tabular-nums">{p.solved_at.slice(5).replace('-', '/')}</span>
                   )}
                 </div>
+                {p.note && <p className="mt-1 line-clamp-2 text-xs text-ink-3">{p.note}</p>}
+                {isDeletePending(p.id) && <p className="mt-1 text-[10px] font-medium text-danger">待删除 {remainingSeconds(p.id)}s</p>}
               </div>
               <div
                 className={cn(
@@ -436,16 +450,23 @@ export default function Practice() {
                   touch ? '' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'
                 )}
               >
-                <IconButton size="sm" onClick={() => startEdit(p)} aria-label="编辑">
+                <IconButton size="sm" onClick={() => startEdit(p)} disabled={isDeletePending(p.id)} aria-label="编辑">
                   <Pencil size={15} />
                 </IconButton>
-                <IconButton size="sm" onClick={() => requestDelete(p)} aria-label="删除">
+                <IconButton size="sm" onClick={() => requestDelete(p)} disabled={isDeletePending(p.id)} aria-label="删除">
                   <Trash2 size={15} />
                 </IconButton>
               </div>
             </li>
           ))}
         </ul>
+      )}
+      {(problemsQuery.data?.total ?? 0) > PRACTICE_PAGE_SIZE && (
+        <div className="flex items-center justify-center gap-3">
+          <IconButton onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0 || problemsQuery.isFetching} aria-label="上一页"><ChevronLeft size={17} /></IconButton>
+          <span className="text-xs text-ink-3 tabular-nums">第 {page + 1} / {Math.ceil((problemsQuery.data?.total ?? 0) / PRACTICE_PAGE_SIZE)} 页</span>
+          <IconButton onClick={() => setPage((value) => value + 1)} disabled={(page + 1) * PRACTICE_PAGE_SIZE >= (problemsQuery.data?.total ?? 0) || problemsQuery.isFetching} aria-label="下一页"><ChevronRight size={17} /></IconButton>
+        </div>
       )}
         </div>
 
@@ -459,7 +480,7 @@ export default function Practice() {
               <div className="text-xs text-ink-2">
                 <div>
                   已 AC <span className="font-bold text-ink tabular-nums">{acCount}</span> /{' '}
-                  {problems?.length ?? 0}
+                  {problemTotal}
                 </div>
                 <div className="mt-1 text-ink-3">其余进行中或待做</div>
               </div>

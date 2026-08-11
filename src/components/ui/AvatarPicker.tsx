@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Image, Trash2, Upload } from 'lucide-react'
 import { cn } from '../../lib/cn'
+import PopoverPanel from './PopoverPanel'
 
 export interface AvatarItem {
   id: string
@@ -20,12 +21,16 @@ interface AvatarPickerProps {
   onSelect: (id: string) => void
   /** 删除历史头像（当前使用的不会被调用） */
   onDelete: (id: string) => void
+  busy?: boolean
 }
 
 /** 头像区：hover 显示更换提示，点击打开历史头像面板 */
-export default function AvatarPicker({ currentSrc, avatars, onUpload, onSelect, onDelete }: AvatarPickerProps) {
+export default function AvatarPicker({ currentSrc, avatars, onUpload, onSelect, onDelete, busy = false }: AvatarPickerProps) {
   const [open, setOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const panelId = useId()
 
   function handleFile(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -34,11 +39,15 @@ export default function AvatarPicker({ currentSrc, avatars, onUpload, onSelect, 
   }
 
   return (
-    <div className="relative">
+    <div ref={rootRef} className="relative">
       <button
+        ref={toggleRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label="打开头像面板"
+        aria-expanded={open}
+        aria-controls={panelId}
+        aria-haspopup="dialog"
         className="group relative block h-8 w-8 shrink-0 overflow-hidden rounded-lg"
       >
         {currentSrc ? (
@@ -61,13 +70,21 @@ export default function AvatarPicker({ currentSrc, avatars, onUpload, onSelect, 
         </span>
       </button>
 
-      {open && (
-        <div className="absolute left-0 top-full z-30 mt-2 w-64 rounded-2xl border border-border bg-surface p-3 shadow-raised">
+      <PopoverPanel
+        id={panelId}
+        open={open}
+        onClose={() => setOpen(false)}
+        title="历史头像"
+        rootRef={rootRef}
+        triggerRef={toggleRef}
+        className="absolute left-0 top-full z-30 mt-2 w-64 p-3"
+      >
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold text-ink">历史头像</p>
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
+              disabled={busy}
               className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-hover"
             >
               <Upload size={12} />
@@ -80,6 +97,7 @@ export default function AvatarPicker({ currentSrc, avatars, onUpload, onSelect, 
                 <button
                   type="button"
                   onClick={() => onSelect(a.id)}
+                  disabled={busy}
                   aria-label={`切换到头像 ${a.id}`}
                   className={cn(
                     'block h-10 w-10 overflow-hidden rounded-lg transition-all duration-150',
@@ -97,6 +115,7 @@ export default function AvatarPicker({ currentSrc, avatars, onUpload, onSelect, 
                   <button
                     type="button"
                     onClick={() => onDelete(a.id)}
+                    disabled={busy}
                     aria-label={`删除头像 ${a.id}`}
                     className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-danger text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100"
                   >
@@ -119,8 +138,7 @@ export default function AvatarPicker({ currentSrc, avatars, onUpload, onSelect, 
             className="hidden"
             onChange={handleFile}
           />
-        </div>
-      )}
+      </PopoverPanel>
     </div>
   )
 }

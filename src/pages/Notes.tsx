@@ -1,15 +1,23 @@
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { BookOpen, Pencil, Pin, PinOff, Save, Search, Trash2, X } from 'lucide-react'
-import { useAddNote, useDeleteNote, useNotes, useTogglePin, useUpdateNote } from '../hooks/useNotes'
+import { BookOpen, ChevronLeft, ChevronRight, Pencil, Pin, PinOff, Save, Search, Trash2, X } from 'lucide-react'
+import {
+  NOTES_PAGE_SIZE,
+  notesListKey,
+  useAddNote,
+  useDeleteNote,
+  useNoteStats,
+  useNoteById,
+  useNotes,
+  useTogglePin,
+  useUpdateNote
+} from '../hooks/useNotes'
+import type { NotesPage } from '../hooks/useNotes'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
-import { searchBy } from '../utils/search'
-import { createdTodayCount } from '../utils/notesStats'
-import { todayStr } from '../utils/date'
-import { noteRestoreInput } from '../utils/restore'
 import type { Note, NoteLayout } from '../types'
+import { useAuth } from '../hooks/useAuth'
 import Button from '../components/ui/Button'
 import Input, { Textarea } from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
@@ -20,6 +28,11 @@ import IconButton from '../components/ui/IconButton'
 import Segmented from '../components/ui/Segmented'
 import SideCard from '../components/ui/SideCard'
 import { cn } from '../lib/cn'
+import QueryError from '../components/ui/QueryError'
+import { useSearchParams } from 'react-router-dom'
+import { useCurrentDate } from '../hooks/useCurrentDate'
+import { LIMITS, parseTags, requireLength, safeExternalUrl, safeExternalUrlOrNull } from '../utils/validation'
+import { useClampPage } from '../hooks/useClampPage'
 
 const LAYOUT_OPTIONS = [
   { value: 'default' as const, label: '标准' },
@@ -29,50 +42,73 @@ const LAYOUT_OPTIONS = [
 
 const EMPTY = { title: '', body: '', tags: '', layout: 'default' as NoteLayout, imageUrl: '' }
 
+function NoteImage({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false)
+  const safeSrc = safeExternalUrlOrNull(src)
+  if (!safeSrc || failed) {
+    return <div role="img" aria-label="图片加载失败" className="flex h-40 items-center justify-center bg-nested text-xs text-ink-3">图片无法加载</div>
+  }
+  return (
+    <img
+      src={safeSrc}
+      alt=""
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+      className="h-40 w-full object-cover"
+    />
+  )
+}
+
 export default function Notes() {
-  const { data: notes, isLoading } = useNotes()
+  const today = useCurrentDate()
+  const [page, setPage] = useState(0)
+  const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query.trim())
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const notesQuery = useNotes({ page, query: deferredQuery, tag: tagFilter })
+  const notes = notesQuery.data?.items ?? []
+  useClampPage(notesQuery.data?.total, NOTES_PAGE_SIZE, page, setPage)
+  const isLoading = notesQuery.isLoading
+  const statsQuery = useNoteStats(today)
   const addNote = useAddNote()
   const updateNote = useUpdateNote()
   const deleteNote = useDeleteNote()
   const togglePin = useTogglePin()
   const push = useToastStore((s) => s.push)
   const touch = useTouch()
+  const { userId } = useAuth()
 
   const [form, setForm] = useState(EMPTY)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [tagFilter, setTagFilter] = useState<string | null>(null)
-  const [query, setQuery] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const focusId = searchParams.get('focus')
+  const focusQuery = useNoteById(focusId)
+  const allTags = useMemo(() => (statsQuery.data?.tagCounts ?? []).map(([tag]) => tag).sort(), [statsQuery.data])
+  const tagCounts = statsQuery.data?.tagCounts ?? []
+  const sorted = notes
 
-  const allTags = useMemo(() => {
-    const s = new Set<string>()
-    for (const n of notes ?? []) for (const t of n.tags) s.add(t)
-    return [...s].sort()
-  }, [notes])
+  useEffect(() => setPage(0), [query, tagFilter])
+  useEffect(() => {
+    if (!focusId || focusQuery.isLoading || focusQuery.data !== null) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('focus')
+    setSearchParams(next, { replace: true })
+    push({ kind: 'info', message: '定位的笔记不存在或已删除' })
+  }, [focusId, focusQuery.isLoading, focusQuery.data, push, searchParams, setSearchParams])
 
-  const tagCounts = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const n of notes ?? []) for (const t of n.tags) m.set(t, (m.get(t) ?? 0) + 1)
-    return [...m.entries()].sort((a, b) => b[1] - a[1])
-  }, [notes])
-
-  const searched = useMemo(() => searchBy(notes ?? [], query, (n) => [n.title ?? '', n.body, ...n.tags]), [notes, query])
-
-  const filtered = useMemo(() => {
-    if (!tagFilter) return searched
-    return searched.filter((n) => n.tags.includes(tagFilter))
-  }, [searched, tagFilter])
-
-  // 置顶在前，其余按更新时间倒序（服务端已按 updated_at 倒序）
-  const sorted = useMemo(() => [...filtered].sort((a, b) => Number(b.pinned) - Number(a.pinned)), [filtered])
-
-  // 今日新增：按本地日期统计（避免 UTC 凌晨串日）
-  const todayCount = createdTodayCount(notes ?? [], todayStr())
-
-  const { requestDelete } = useDeferredDelete<Note>({
-    key: ['notes'],
+  const { requestDelete, isPending: isDeletePending, remainingSeconds } = useDeferredDelete<Note, NotesPage>({
+    key: notesListKey(userId, page, deferredQuery, tagFilter),
     label: (n) => n.title ?? '笔记',
     remove: (id) => deleteNote.mutateAsync(id),
-    restore: (n) => addNote.mutate(noteRestoreInput(n))
+    cache: {
+      getItems: (cache) => cache?.items ?? [],
+      remove: (cache, id) => cache && {
+        items: cache.items.filter((item) => item.id !== id),
+        total: Math.max(0, cache.total - 1)
+      },
+      restore: (cache) => cache
+    }
   })
 
   function reset() {
@@ -80,25 +116,28 @@ export default function Notes() {
     setEditingId(null)
   }
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    const body = form.body.trim()
-    if (!body) return
-    const payload = {
-      title: form.title.trim() || null,
-      body,
-      tags: form.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
-      layout: form.layout,
-      image_url: form.layout === 'feature' && form.imageUrl.trim() ? form.imageUrl.trim() : null
+    try {
+      const body = requireLength(form.body.trim(), LIMITS.body, '正文', 1)
+      const payload = {
+        title: form.title.trim() ? requireLength(form.title.trim(), LIMITS.title, '标题') : null,
+        body,
+        tags: parseTags(form.tags),
+        layout: form.layout,
+        image_url: form.layout === 'feature' ? safeExternalUrl(form.imageUrl) : null
+      }
+      if (editingId) {
+        await updateNote.mutateAsync({ id: editingId, patch: payload })
+        push({ kind: 'success', message: '已保存修改' })
+      } else {
+        await addNote.mutateAsync(payload)
+        push({ kind: 'success', message: '已保存' })
+      }
+      reset()
+    } catch (error) {
+      push({ kind: 'error', message: error instanceof Error ? error.message : editingId ? '笔记更新失败，请重试' : '笔记保存失败，请重试' })
     }
-    if (editingId) {
-      updateNote.mutate({ id: editingId, patch: payload })
-      push({ kind: 'success', message: '已保存修改' })
-    } else {
-      addNote.mutate(payload)
-      push({ kind: 'success', message: '已保存' })
-    }
-    reset()
   }
 
   function startEdit(n: Note) {
@@ -112,9 +151,13 @@ export default function Notes() {
     })
   }
 
-  function handlePin(n: Note) {
-    togglePin.mutate({ id: n.id, pinned: !n.pinned })
-    push({ kind: 'info', message: n.pinned ? '已取消置顶' : '已置顶' })
+  async function handlePin(n: Note) {
+    try {
+      await togglePin.mutateAsync({ id: n.id, pinned: !n.pinned })
+      push({ kind: 'info', message: n.pinned ? '已取消置顶' : '已置顶' })
+    } catch {
+      push({ kind: 'error', message: '置顶状态保存失败，请重试' })
+    }
   }
 
   /** 操作按钮组（置顶/编辑/删除） */
@@ -126,13 +169,13 @@ export default function Notes() {
           touch ? '' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'
         )}
       >
-        <IconButton size="sm" onClick={() => handlePin(n)} aria-label={n.pinned ? '取消置顶' : '置顶'}>
+        <IconButton size="sm" onClick={() => handlePin(n)} disabled={isDeletePending(n.id)} aria-label={n.pinned ? '取消置顶' : '置顶'}>
           {n.pinned ? <PinOff size={15} /> : <Pin size={15} />}
         </IconButton>
-        <IconButton size="sm" onClick={() => startEdit(n)} aria-label="编辑">
+        <IconButton size="sm" onClick={() => startEdit(n)} disabled={isDeletePending(n.id)} aria-label="编辑">
           <Pencil size={15} />
         </IconButton>
-        <IconButton size="sm" onClick={() => requestDelete(n)} aria-label="删除">
+        <IconButton size="sm" onClick={() => requestDelete(n)} disabled={isDeletePending(n.id)} aria-label="删除">
           <Trash2 size={15} />
         </IconButton>
       </div>
@@ -145,9 +188,9 @@ export default function Notes() {
       return (
         <li
           key={n.id}
-          className="group rounded-2xl border border-border bg-surface px-6 py-5 transition-colors duration-150 hover:bg-hover"
+          className={cn('group rounded-2xl border bg-surface px-6 py-5 transition-colors duration-150 hover:bg-hover', isDeletePending(n.id) ? 'border-danger/40 opacity-60' : 'border-border')}
         >
-          <div className="flex justify-end">{renderActions(n)}</div>
+          <div className="flex items-center justify-end gap-2">{isDeletePending(n.id) && <Badge variant="danger">待删除 {remainingSeconds(n.id)}s</Badge>}{renderActions(n)}</div>
           <p className="pt-1 text-center text-base font-medium leading-relaxed text-ink">
             {n.body}
           </p>
@@ -165,11 +208,12 @@ export default function Notes() {
       return (
         <li
           key={n.id}
-          className="group overflow-hidden rounded-2xl border border-border bg-surface transition-colors duration-150 hover:bg-hover"
+          className={cn('group overflow-hidden rounded-2xl border bg-surface transition-colors duration-150 hover:bg-hover', isDeletePending(n.id) ? 'border-danger/40 opacity-60' : 'border-border')}
         >
           <div className="relative">
-            <img src={n.image_url} alt="" className="h-40 w-full object-cover" />
+            <NoteImage src={n.image_url} />
             <div className="absolute right-2 top-2 rounded-xl bg-surface/90 p-1 backdrop-blur">
+              {isDeletePending(n.id) && <Badge variant="danger">待删除 {remainingSeconds(n.id)}s</Badge>}
               {renderActions(n)}
             </div>
           </div>
@@ -201,7 +245,7 @@ export default function Notes() {
     return (
       <li
         key={n.id}
-        className="group rounded-2xl border border-border bg-surface p-4 transition-colors duration-150 hover:bg-hover"
+        className={cn('group rounded-2xl border bg-surface p-4 transition-colors duration-150 hover:bg-hover', isDeletePending(n.id) ? 'border-danger/40 opacity-60' : 'border-border')}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -225,6 +269,7 @@ export default function Notes() {
             )}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5">
+            {isDeletePending(n.id) && <Badge variant="danger">待删除 {remainingSeconds(n.id)}s</Badge>}
             <span className="text-xs text-ink-3 tabular-nums">{n.updated_at.slice(0, 10)}</span>
             {renderActions(n)}
           </div>
@@ -240,6 +285,18 @@ export default function Notes() {
         title="内容记录"
         description="灵感、摘录与收藏。"
       />
+      {(notesQuery.isError || statsQuery.isError) && (
+        <QueryError onRetry={() => { notesQuery.refetch(); statsQuery.refetch() }} />
+      )}
+
+      {focusQuery.data && (
+        <div className="rounded-2xl border border-accent bg-accent-2/40 p-4 shadow-card">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">搜索定位</div>
+          <div className="mt-1 text-sm font-semibold text-ink">{focusQuery.data.title ?? '无标题'}</div>
+          <p className="mt-1 line-clamp-2 text-xs text-ink-2">{focusQuery.data.body}</p>
+          <button type="button" onClick={() => { const next = new URLSearchParams(searchParams); next.delete('focus'); setSearchParams(next, { replace: true }) }} className="mt-2 text-xs font-medium text-accent">关闭定位</button>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-4">
@@ -249,6 +306,7 @@ export default function Notes() {
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               placeholder="标题（可选）"
+              maxLength={LIMITS.title}
             />
             <Textarea
               value={form.body}
@@ -256,6 +314,7 @@ export default function Notes() {
               placeholder="写点什么：灵感、摘录、收藏的链接…"
               rows={4}
               noResize
+              maxLength={LIMITS.body}
             />
             <div className="flex flex-wrap items-center gap-2">
               <Segmented
@@ -268,6 +327,7 @@ export default function Notes() {
                   value={form.imageUrl}
                   onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}
                   placeholder="图片 URL（可选）"
+                  maxLength={LIMITS.url}
                   className="min-w-40 flex-1"
                 />
               )}
@@ -277,6 +337,7 @@ export default function Notes() {
                 value={form.tags}
                 onChange={(e) => setForm({ ...form, tags: e.target.value })}
                 placeholder="标签，用逗号分隔（可选）"
+                maxLength={LIMITS.tags * (LIMITS.tag + 1)}
                 className="min-w-48 flex-1"
               />
               <div className="flex gap-2">
@@ -286,7 +347,7 @@ export default function Notes() {
                     取消
                   </Button>
                 )}
-                <Button type="submit" disabled={!form.body.trim()}>
+                <Button type="submit" disabled={!form.body.trim() || addNote.isPending || updateNote.isPending}>
                   <Save size={16} />
                   {editingId ? '保存修改' : '保存'}
                 </Button>
@@ -301,7 +362,7 @@ export default function Notes() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜索标题、正文、标签…"
+                placeholder="搜索标题、正文…"
                 className="pl-9"
               />
             </div>
@@ -359,8 +420,8 @@ export default function Notes() {
           <SideCard title="记录统计" icon={<BookOpen size={14} />}>
             <ul className="space-y-2">
               {[
-                { k: '累计记录', v: `${notes?.length ?? 0} 条` },
-                { k: '今日新增', v: `${todayCount} 条` },
+                { k: '累计记录', v: `${statsQuery.data?.total ?? 0} 条` },
+                { k: '今日新增', v: `${statsQuery.data?.today ?? 0} 条` },
                 { k: '标签种类', v: `${allTags.length} 种` }
               ].map((r) => (
                 <li key={r.k} className="flex items-center justify-between text-xs">
@@ -390,6 +451,27 @@ export default function Notes() {
               </ul>
             )}
           </SideCard>
+          {(notesQuery.data?.total ?? 0) > NOTES_PAGE_SIZE && (
+            <div className="flex items-center justify-center gap-3 rounded-2xl border border-border bg-surface p-2">
+              <IconButton
+                onClick={() => setPage((value) => Math.max(0, value - 1))}
+                disabled={page === 0 || notesQuery.isFetching}
+                aria-label="上一页"
+              >
+                <ChevronLeft size={17} />
+              </IconButton>
+              <span className="text-xs text-ink-3 tabular-nums">
+                第 {page + 1} / {Math.ceil((notesQuery.data?.total ?? 0) / NOTES_PAGE_SIZE)} 页
+              </span>
+              <IconButton
+                onClick={() => setPage((value) => value + 1)}
+                disabled={(page + 1) * NOTES_PAGE_SIZE >= (notesQuery.data?.total ?? 0) || notesQuery.isFetching}
+                aria-label="下一页"
+              >
+                <ChevronRight size={17} />
+              </IconButton>
+            </div>
+          )}
         </aside>
       </div>
     </div>

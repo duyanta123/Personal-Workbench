@@ -10,17 +10,11 @@ import {
   Wallet
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useGoals } from '../hooks/useGoals'
-import { useHabitLogs, useHabits } from '../hooks/useHabits'
-import { useLedgerEntries } from '../hooks/useLedger'
-import { useNotes } from '../hooks/useNotes'
-import { useTodos, useToggleTodo } from '../hooks/useTodos'
-import { useProblems } from '../hooks/useProblems'
-import { useWorkoutExercises, useWorkoutSessions } from '../hooks/useWorkouts'
-import { todayStr } from '../utils/date'
+import { useToggleTodo } from '../hooks/useTodos'
 import { donutStops } from '../utils/ledgerStats'
-import { habitSeries } from '../utils/weekly'
-import type { LedgerEntry, Todo } from '../types'
+import type { Todo } from '../types'
+import QueryError from '../components/ui/QueryError'
+import { useToastStore } from '../stores/toast'
 import PageHeader from '../components/ui/PageHeader'
 import Progress from '../components/ui/Progress'
 import SectionTitle from '../components/ui/SectionTitle'
@@ -31,9 +25,8 @@ import PomodoroCard from '../components/ui/PomodoroCard'
 import WeeklyTrend from '../components/ui/WeeklyTrend'
 import OverviewTile from '../components/ui/OverviewTile'
 import FitnessTile from '../components/ui/FitnessTile'
-
-const hour = new Date().getHours()
-const greet = hour < 6 ? '夜深了' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好'
+import { useCurrentDate, useCurrentHour } from '../hooks/useCurrentDate'
+import { useDashboardSummary } from '../hooks/useWorkbenchSummary'
 
 /** 首页快捷记录：4 个按钮直达对应模块（页面新建表单常驻） */
 const QUICK_ADD: { to: string; icon: LucideIcon; name: string; cls: string }[] = [
@@ -73,12 +66,20 @@ function QuickAdd() {
 }
 
 /** 首页待办磁贴：完成数 + 进度 + 前 5 条快捷勾选 */
-function TodoTile({ todos }: { todos: Todo[] }) {
+function TodoTile({ todos, total, done }: { todos: Todo[]; total: number; done: number }) {
   const navigate = useNavigate()
   const toggleTodo = useToggleTodo()
-  const doneCount = todos.filter((t) => t.done).length
-  const pct = todos.length ? Math.round((doneCount / todos.length) * 100) : 0
+  const push = useToastStore((s) => s.push)
+  const pct = total ? Math.round((done / total) * 100) : 0
   const active = todos.filter((t) => !t.done).slice(0, 5)
+
+  async function completeTodo(id: string) {
+    try {
+      await toggleTodo.mutateAsync({ id, done: true })
+    } catch {
+      push({ kind: 'error', message: '待办更新失败，请重试' })
+    }
+  }
 
   return (
     <div className="flex flex-col rounded-2xl border border-border bg-surface p-5">
@@ -94,8 +95,8 @@ function TodoTile({ todos }: { todos: Todo[] }) {
       </div>
       <div className="mt-3 flex items-center gap-2">
         <span className="text-xl font-bold tabular-nums text-ink">
-          {doneCount}
-          <span className="text-sm font-normal text-ink-3">/{todos.length}</span>
+          {done}
+          <span className="text-sm font-normal text-ink-3">/{total}</span>
         </span>
         <span className="text-[10px] text-ink-3">完成 {pct}%</span>
         <Progress value={pct} color="bg-m1" className="flex-1" />
@@ -107,7 +108,8 @@ function TodoTile({ todos }: { todos: Todo[] }) {
           {active.map((t) => (
             <li key={t.id} className="flex items-center gap-2 py-2">
               <button
-                onClick={() => toggleTodo.mutate({ id: t.id, done: true })}
+                onClick={() => void completeTodo(t.id)}
+                disabled={toggleTodo.isPending}
                 aria-label="完成"
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-ink-3 text-transparent transition-colors hover:border-accent"
               >
@@ -128,16 +130,9 @@ function TodoTile({ todos }: { todos: Todo[] }) {
 }
 
 /** 首页月度开销磁贴：本月支出 + 分类水平条 */
-function MoneyTile({ entries }: { entries: LedgerEntry[] }) {
+function MoneyTile({ expense, categories }: { expense: number; categories: [string, number][] }) {
   const navigate = useNavigate()
-  const month = todayStr().slice(0, 7)
-  const monthEntries = entries.filter((e) => e.entry_date.startsWith(month))
-  const expense = monthEntries.filter((e) => e.kind === 'expense').reduce((s, e) => s + e.amount, 0)
-  const catTotals = new Map<string, number>()
-  for (const e of monthEntries) {
-    if (e.kind === 'expense') catTotals.set(e.category, (catTotals.get(e.category) ?? 0) + e.amount)
-  }
-  const segs = donutStops([...catTotals.entries()].sort((a, b) => b[1] - a[1])).slice(0, 5)
+  const segs = donutStops(categories).slice(0, 5)
   const max = Math.max(1, ...segs.map((s) => s.value))
 
   return (
@@ -181,17 +176,31 @@ function MoneyTile({ entries }: { entries: LedgerEntry[] }) {
 }
 
 export default function Dashboard() {
-  const todos = useTodos()
-  const habits = useHabits()
-  const logs = useHabitLogs()
-  const entries = useLedgerEntries()
-  const goals = useGoals()
-  const notes = useNotes()
-  const problems = useProblems()
-  const workouts = useWorkoutSessions()
-  const exercises = useWorkoutExercises()
+  const today = useCurrentDate()
+  const hour = useCurrentHour()
+  const greet = hour < 6 ? '夜深了' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好'
+  const month = today.slice(0, 7)
+  const summary = useDashboardSummary(today, month)
+  const data = summary.data
+  const series = (data?.weekly_habits ?? []).map((point) => ({
+    date: point.date,
+    label: `${Number(point.date.slice(5, 7))}/${Number(point.date.slice(8, 10))}`,
+    value: point.value
+  }))
+  const todayTodos = data?.today_todos ?? []
 
-  const series = habitSeries(logs.data ?? [])
+  if (summary.isError) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          eyebrow="OVERVIEW"
+          title={greet}
+          description={`${today} · 今天也按自己的节奏来。`}
+        />
+        <QueryError onRetry={() => summary.refetch()} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -200,7 +209,7 @@ export default function Dashboard() {
         <PageHeader
           eyebrow="OVERVIEW"
           title={greet}
-          description={`${todayStr()} · 今天也按自己的节奏来。`}
+          description={`${today} · 今天也按自己的节奏来。`}
         />
         <div className="hidden h-14 w-14 items-center justify-center rounded-2xl bg-surface text-m1 shadow-card md:flex">
           <Sprout size={28} />
@@ -215,27 +224,13 @@ export default function Dashboard() {
             <ClockCard />
           </div>
           <div className="lg:col-span-4">
-            <FocusList
-              todos={todos.data ?? []}
-              habits={habits.data ?? []}
-              logs={logs.data ?? []}
-              goals={goals.data ?? []}
-            />
+            <FocusList />
           </div>
           <div className="lg:col-span-4">
             <QuickAdd />
           </div>
           <div className="lg:col-span-12">
-            <OverviewTile
-              todos={todos.data ?? []}
-              habits={habits.data ?? []}
-              logs={logs.data ?? []}
-              goals={goals.data ?? []}
-              entries={entries.data ?? []}
-              notes={notes.data ?? []}
-              problems={problems.data ?? []}
-              workouts={workouts.data ?? []}
-            />
+            {data?.overview && <OverviewTile date={today} overview={data.overview} />}
           </div>
         </div>
       </div>
@@ -245,10 +240,14 @@ export default function Dashboard() {
         <SectionTitle zh="习惯与待办" en="Habits & Tasks" />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
           <div className="lg:col-span-7">
-            <HabitWeekTable habits={habits.data ?? []} logs={logs.data ?? []} />
+            <HabitWeekTable habits={data?.habits ?? []} logs={data?.habit_logs ?? []} />
           </div>
           <div className="lg:col-span-5">
-            <TodoTile todos={todos.data ?? []} />
+      <TodoTile
+        todos={todayTodos}
+        total={data?.overview.todo_total ?? 0}
+        done={data?.overview.todo_done ?? 0}
+      />
           </div>
         </div>
       </div>
@@ -261,7 +260,7 @@ export default function Dashboard() {
             <PomodoroCard />
           </div>
           <div className="rounded-2xl border border-border bg-surface p-5 lg:col-span-8">
-            <WeeklyTrend series={series} unit="次" title="本周打卡趋势" />
+            <WeeklyTrend series={series} unit="次" title="近 7 天打卡趋势" />
           </div>
         </div>
       </div>
@@ -270,8 +269,8 @@ export default function Dashboard() {
       <div>
         <SectionTitle zh="收支与成长" en="Money & Growth" />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <MoneyTile entries={entries.data ?? []} />
-          <FitnessTile sessions={workouts.data ?? []} exercises={exercises.data ?? []} />
+          <MoneyTile expense={data?.overview.month_expense ?? 0} categories={data?.expense_categories ?? []} />
+          {data?.fitness && <FitnessTile summary={data.fitness} />}
         </div>
       </div>
     </div>

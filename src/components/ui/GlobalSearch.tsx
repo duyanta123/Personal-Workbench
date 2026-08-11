@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BookOpen, ListTodo, Search, Wallet, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useTodos } from '../../hooks/useTodos'
-import { useNotes } from '../../hooks/useNotes'
-import { useLedgerEntries } from '../../hooks/useLedger'
-import { searchAll } from '../../utils/search'
+import { useGlobalSearch } from '../../hooks/useGlobalSearch'
 import Input from './Input'
+import QueryError from './QueryError'
+import Modal from './Modal'
 
 interface Group {
   title: string
@@ -19,24 +18,16 @@ interface Group {
 /** 跨模块全局搜索（待办 / 笔记 / 记账） */
 export default function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate()
-  const { data: todos } = useTodos()
-  const { data: notes } = useNotes()
-  const { data: ledger } = useLedgerEntries()
   const [q, setQ] = useState('')
+  const deferredQuery = useDeferredValue(q)
+  const searchQuery = useGlobalSearch(deferredQuery, open)
 
   useEffect(() => {
-    if (open) {
-      setQ('')
-      const onKey = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') onClose()
-      }
-      window.addEventListener('keydown', onKey)
-      return () => window.removeEventListener('keydown', onKey)
-    }
-  }, [open, onClose])
+    if (open) setQ('')
+  }, [open])
 
   const groups = useMemo<Group[]>(() => {
-    const r = searchAll({ todos: todos ?? [], notes: notes ?? [], ledger: ledger ?? [] }, q)
+    const r = searchQuery.data ?? { todos: [], notes: [], ledger: [] }
     return [
       {
         title: '待办',
@@ -64,21 +55,17 @@ export default function GlobalSearch({ open, onClose }: { open: boolean; onClose
         }))
       }
     ]
-  }, [todos, notes, ledger, q])
-
-  if (!open) return null
+  }, [searchQuery.data])
 
   const total = groups.reduce((s, g) => s + g.items.length, 0)
 
-  function go(to: string) {
+  function go(to: string, id: string) {
     onClose()
-    navigate(to)
+    navigate(`${to}?focus=${encodeURIComponent(id)}`)
   }
 
   return (
-    <div className="fixed inset-0 z-50 fade-in">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="absolute inset-x-0 top-0 mx-auto mt-0 w-full max-w-xl p-4 sm:mt-16">
+    <Modal open={open} onClose={onClose} title="全局搜索" panelClassName="max-w-xl">
         <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-overlay">
           <div className="flex items-center gap-2 border-b border-border px-4 py-3">
             <Search size={18} className="shrink-0 text-ink-3" />
@@ -86,7 +73,6 @@ export default function GlobalSearch({ open, onClose }: { open: boolean; onClose
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="搜索待办、笔记、账单…"
-              autoFocus
               className="border-0 bg-transparent px-0 py-0 focus:border-0"
             />
             <button onClick={onClose} aria-label="关闭搜索" className="shrink-0 text-ink-3 hover:text-ink">
@@ -96,6 +82,10 @@ export default function GlobalSearch({ open, onClose }: { open: boolean; onClose
           <div className="max-h-[60vh] overflow-y-auto p-2">
             {!q.trim() ? (
               <p className="px-3 py-6 text-center text-sm text-ink-3">输入关键词，跨模块搜索</p>
+            ) : searchQuery.isLoading ? (
+              <p className="px-3 py-6 text-center text-sm text-ink-3">搜索中…</p>
+            ) : searchQuery.isError ? (
+              <QueryError onRetry={() => searchQuery.refetch()} />
             ) : total === 0 ? (
               <p className="px-3 py-6 text-center text-sm text-ink-3">没有找到「{q.trim()}」</p>
             ) : (
@@ -109,7 +99,7 @@ export default function GlobalSearch({ open, onClose }: { open: boolean; onClose
                     {g.items.slice(0, 6).map((it) => (
                       <button
                         key={it.id}
-                        onClick={() => go(g.to)}
+                        onClick={() => go(g.to, it.id)}
                         className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors hover:bg-hover"
                       >
                         <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${g.cls}`}>
@@ -126,7 +116,6 @@ export default function GlobalSearch({ open, onClose }: { open: boolean; onClose
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   )
 }

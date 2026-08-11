@@ -1,8 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import type { PomodoroPrefs, UserPreferences } from '../types'
+import { useAuth } from './useAuth'
+import { buildPreferencesUpsert } from '../utils/dataConsistency'
+import type { PreferencesPatch } from '../utils/dataConsistency'
 
-export const prefsKey = ['prefs']
+export const prefsKey = (userId: string | null) => ['prefs', userId] as const
 
 export const DEFAULT_CATEGORIES: UserPreferences['categories'] = { expense: [], income: [] }
 
@@ -15,44 +18,35 @@ export const DEFAULT_POMODORO: PomodoroPrefs = {
 }
 
 export function usePreferences() {
+  const { userId } = useAuth()
   return useQuery({
-    queryKey: prefsKey,
+    queryKey: prefsKey(userId),
     queryFn: async () => {
       const { data, error } = await supabase!.from('user_preferences').select('*').maybeSingle()
       if (error) throw error
       return (data ?? null) as UserPreferences | null
     },
-    enabled: !!supabase
+    enabled: !!supabase && !!userId
   })
-}
-
-interface PrefsPatch {
-  categories?: UserPreferences['categories']
-  monthly_budget?: number | null
-  pomodoro?: PomodoroPrefs
 }
 
 /** 新增/更新偏好（upsert，缺省字段保持现状） */
 export function useUpdatePreferences() {
   const qc = useQueryClient()
+  const { userId } = useAuth()
   return useMutation({
-    mutationFn: async (patch: PrefsPatch) => {
-      const current = qc.getQueryData<UserPreferences | null>(prefsKey)
-      const payload: PrefsPatch = {
-        categories: patch.categories ?? current?.categories ?? DEFAULT_CATEGORIES,
-        monthly_budget:
-          patch.monthly_budget !== undefined ? patch.monthly_budget : (current?.monthly_budget ?? null),
-        pomodoro: patch.pomodoro ?? current?.pomodoro ?? DEFAULT_POMODORO
-      }
+    mutationFn: async (patch: PreferencesPatch) => {
+      if (!userId) throw new Error('未登录')
+      const payload = buildPreferencesUpsert(userId, patch)
       const { data, error } = await supabase!
         .from('user_preferences')
-        .upsert(payload)
+        .upsert(payload, { onConflict: 'user_id' })
         .select()
         .single()
       if (error) throw error
       return data as UserPreferences
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: prefsKey })
+    onSuccess: () => qc.invalidateQueries({ queryKey: prefsKey(userId) })
   })
 }
 

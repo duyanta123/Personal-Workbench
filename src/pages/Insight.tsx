@@ -9,15 +9,6 @@ import {
   Target,
   Wallet
 } from 'lucide-react'
-import { useGoals } from '../hooks/useGoals'
-import { useHabitLogs, useHabits } from '../hooks/useHabits'
-import { useLedgerEntries } from '../hooks/useLedger'
-import { useNotes } from '../hooks/useNotes'
-import { useTodos } from '../hooks/useTodos'
-import { useProblems } from '../hooks/useProblems'
-import { useWorkoutSessions } from '../hooks/useWorkouts'
-import { monthPrefix, todayStr } from '../utils/date'
-import { computeStreak } from '../utils/streak'
 import type { LucideIcon } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
@@ -26,6 +17,9 @@ import Ring from '../components/ui/Ring'
 import SectionTitle from '../components/ui/SectionTitle'
 import Skeleton from '../components/ui/Skeleton'
 import { cn } from '../lib/cn'
+import QueryError from '../components/ui/QueryError'
+import { useCurrentDate } from '../hooks/useCurrentDate'
+import { useWorkbenchInsights } from '../hooks/useWorkbenchSummary'
 
 const BODY_PART_LABEL: Record<string, string> = {
   chest: '胸',
@@ -77,78 +71,59 @@ function StatRow({ k, v }: StatRowProps) {
 }
 
 export default function Insight() {
-  const todos = useTodos()
-  const habits = useHabits()
-  const logs = useHabitLogs()
-  const entries = useLedgerEntries()
-  const goals = useGoals()
-  const notes = useNotes()
-  const problems = useProblems()
-  const sessions = useWorkoutSessions()
+  const today = useCurrentDate()
+  const month = today.slice(0, 7)
+  const insights = useWorkbenchInsights(today, month)
+  const loading = insights.isLoading
 
-  const loading = [todos, habits, logs, entries, goals, notes, problems, sessions].some(
-    (q) => q.isLoading
-  )
+  if (insights.isError) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          eyebrow="INSIGHT"
+          title="洞察复盘"
+          description="各模块进展一览 · 记录 → 执行 → 统计 → 反馈"
+        />
+        <QueryError onRetry={() => insights.refetch()} />
+      </div>
+    )
+  }
 
-  const today = todayStr()
-  const month = monthPrefix()
+  const data = insights.data
 
   // 待办
-  const todoDone = todos.data?.filter((t) => t.done).length ?? 0
-  const todoTotal = todos.data?.length ?? 0
+  const todoDone = data?.todos.done ?? 0
+  const todoTotal = data?.todos.total ?? 0
   const todoPct = todoTotal ? Math.round((todoDone / todoTotal) * 100) : 0
 
   // 习惯
-  const doneToday = new Set((logs.data ?? []).filter((l) => l.log_date === today).map((l) => l.habit_id))
-  const byHabit = new Map<string, Set<string>>()
-  for (const l of logs.data ?? []) {
-    const s = byHabit.get(l.habit_id) ?? new Set<string>()
-    s.add(l.log_date)
-    byHabit.set(l.habit_id, s)
-  }
-  const habitDone = doneToday.size
-  const habitTotal = habits.data?.length ?? 0
+  const habitDone = data?.habits.done_today ?? 0
+  const habitTotal = data?.habits.total ?? 0
   const habitPct = habitTotal ? Math.round((habitDone / habitTotal) * 100) : 0
-  const topStreaks = (habits.data ?? [])
-    .map((h) => ({ name: h.name, s: computeStreak(byHabit.get(h.id) ?? new Set(), today) }))
-    .sort((a, b) => b.s - a.s)
-    .slice(0, 3)
+  const topStreaks = (data?.habits.top_streaks ?? []).slice(0, 3).map((row) => ({ name: row.name, s: row.streak }))
 
   // 记账
-  const monthIncome = (entries.data ?? [])
-    .filter((e) => e.kind === 'income' && e.entry_date.startsWith(month))
-    .reduce((s, e) => s + e.amount, 0)
-  const monthExpense = (entries.data ?? [])
-    .filter((e) => e.kind === 'expense' && e.entry_date.startsWith(month))
-    .reduce((s, e) => s + e.amount, 0)
+  const monthIncome = data?.ledger.income ?? 0
+  const monthExpense = data?.ledger.expense ?? 0
 
   // 长期目标
-  const goalDone = (goals.data ?? []).filter((g) => g.current >= g.target).length
-  const goalTotal = goals.data?.length ?? 0
-  const goalPct = goalTotal
-    ? Math.round(
-        goals.data!.reduce((s, g) => s + Math.min(100, (g.current / g.target) * 100), 0) / goalTotal
-      )
-    : 0
+  const goalDone = data?.goals.done ?? 0
+  const goalTotal = data?.goals.total ?? 0
+  const goalPct = data?.goals.percent ?? 0
 
   // 刷题
-  const acCount = (problems.data ?? []).filter(
-    (p) => p.status === 'ac_solo' || p.status === 'ac_hint'
-  ).length
-  const problemTotal = problems.data?.length ?? 0
-  const todaySolved = (problems.data ?? []).filter((p) => p.solved_at === today).length
+  const acCount = data?.practice.ac_count ?? 0
+  const problemTotal = data?.practice.total ?? 0
+  const todaySolved = data?.practice.today_solved ?? 0
 
   // 健身
-  const monthSessions = (sessions.data ?? []).filter((s) => s.date.startsWith(month))
-  const monthMinutes = monthSessions.reduce((s, x) => s + (x.duration_min ?? 0), 0)
-  const partCount = new Map<string, number>()
-  for (const s of monthSessions) partCount.set(s.body_part, (partCount.get(s.body_part) ?? 0) + 1)
-  const partRows = [...partCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
+  const monthSessions = data?.workout.month_sessions ?? 0
+  const monthMinutes = data?.workout.month_minutes ?? 0
+  const partRows = (data?.workout.month_body_parts ?? []).slice(0, 3)
 
   // 内容记录
-  const noteTotal = notes.data?.length ?? 0
-  const noteTags = new Set<string>()
-  for (const n of notes.data ?? []) for (const t of n.tags) noteTags.add(t)
+  const noteTotal = data?.notes.total ?? 0
+  const noteTags = data?.notes.tag_count ?? 0
 
   return (
     <div className="space-y-4">
@@ -157,7 +132,6 @@ export default function Insight() {
         title="洞察复盘"
         description="各模块进展一览 · 记录 — 执行 — 统计 — 反馈"
       />
-
       <SectionTitle zh="模块概况" en="Overview" />
 
       {loading ? (
@@ -253,7 +227,7 @@ export default function Insight() {
           <Card padding="md">
             <CardHead to="/workout" icon={Dumbbell} cls="bg-m1/10 text-m1" title="健身记录" />
             <ul className="mt-3 space-y-2">
-              <StatRow k="本月训练" v={`${monthSessions.length} 次`} />
+              <StatRow k="本月训练" v={`${monthSessions} 次`} />
               <StatRow k="本月时长" v={`${monthMinutes} 分钟`} />
               {partRows.length > 0 && (
                 <li className="flex items-center justify-between text-xs">
@@ -271,7 +245,7 @@ export default function Insight() {
             <CardHead to="/notes" icon={BookOpen} cls="bg-m5/10 text-m5" title="内容记录" />
             <ul className="mt-3 space-y-2">
               <StatRow k="累计记录" v={`${noteTotal} 条`} />
-              <StatRow k="标签种类" v={`${noteTags.size} 种`} />
+              <StatRow k="标签种类" v={`${noteTags} 种`} />
             </ul>
           </Card>
         </div>

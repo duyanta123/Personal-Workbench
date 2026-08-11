@@ -1,8 +1,8 @@
 import { renderHook, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { beforeEach, expect, test } from 'vitest'
-import { useDeferredDelete } from './useDeferredDelete'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { cancelAllPendingDeletes, useDeferredDelete } from './useDeferredDelete'
 import { useToastStore } from '../stores/toast'
 
 const key = ['items']
@@ -11,7 +11,7 @@ interface Item {
   name: string
 }
 
-function setup(remove: (id: string) => void | Promise<unknown>) {
+function setup(remove: (id: string) => Promise<unknown>) {
   const qc = new QueryClient()
   qc.setQueryData<Item[]>(key, [
     { id: 'a', name: 'A' },
@@ -25,8 +25,7 @@ function setup(remove: (id: string) => void | Promise<unknown>) {
       useDeferredDelete<Item>({
         key,
         label: (i) => i.name,
-        remove,
-        restore: () => {}
+        remove
       }),
     { wrapper }
   )
@@ -34,15 +33,21 @@ function setup(remove: (id: string) => void | Promise<unknown>) {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers()
+  act(() => cancelAllPendingDeletes())
   useToastStore.setState({ toasts: [] })
+})
+
+afterEach(() => {
+  act(() => cancelAllPendingDeletes())
+  vi.useRealTimers()
 })
 
 test('删除失败时恢复缓存中的该项并提示错误', async () => {
   const { qc, result } = setup(() => Promise.reject(new Error('network')))
   await act(async () => {
     result.current.requestDelete({ id: 'a', name: 'A' })
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(5000)
   })
   // 缓存恢复原状
   expect(qc.getQueryData<Item[]>(key)?.map((i) => i.id)).toEqual(['a', 'b'])
@@ -50,11 +55,13 @@ test('删除失败时恢复缓存中的该项并提示错误', async () => {
   expect(useToastStore.getState().toasts.some((t) => t.kind === 'error')).toBe(true)
 })
 
-test('删除成功时保留乐观移除结果，不出现错误提示', async () => {
+test('撤销窗口内保留原行，成功后才移除', async () => {
   const { qc, result } = setup(() => Promise.resolve())
+  act(() => result.current.requestDelete({ id: 'a', name: 'A' }))
+  expect(qc.getQueryData<Item[]>(key)?.map((i) => i.id)).toEqual(['a', 'b'])
+  expect(result.current.isPending('a')).toBe(true)
   await act(async () => {
-    result.current.requestDelete({ id: 'a', name: 'A' })
-    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(5000)
   })
   expect(qc.getQueryData<Item[]>(key)?.map((i) => i.id)).toEqual(['b'])
   expect(useToastStore.getState().toasts.some((t) => t.kind === 'error')).toBe(false)
@@ -65,8 +72,18 @@ test('并发删除：仅失败的项被恢复，成功删除的项不回滚', as
   await act(async () => {
     result.current.requestDelete({ id: 'a', name: 'A' })
     result.current.requestDelete({ id: 'b', name: 'B' })
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(5000)
   })
   expect(qc.getQueryData<Item[]>(key)?.map((i) => i.id)).toEqual(['a'])
+})
+
+test('撤销时取消实际删除且原行从未隐藏', async () => {
+  const remove = vi.fn(() => Promise.resolve())
+  const { qc, result } = setup(remove)
+  act(() => result.current.requestDelete({ id: 'a', name: 'A' }))
+  expect(qc.getQueryData<Item[]>(key)?.map((i) => i.id)).toEqual(['a', 'b'])
+  act(() => useToastStore.getState().toasts[0].onAction?.())
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(remove).not.toHaveBeenCalled()
+  expect(qc.getQueryData<Item[]>(key)?.map((i) => i.id)).toEqual(['a', 'b'])
 })
