@@ -57,6 +57,17 @@ insert into public.user_data_revisions (user_id) values
   ('10000000-0000-0000-0000-000000000002')
 on conflict (user_id) do nothing;
 
+-- The seed inserts above intentionally exercise revision triggers. Reset the
+-- two isolated test accounts before assuming the authenticated role so the
+-- sync-state assertion tests the RPC contract instead of seed order/count.
+insert into public.user_data_revisions (user_id, revision, restore_epoch, updated_at) values
+  ('10000000-0000-0000-0000-000000000001', 0, 0, pg_catalog.now()),
+  ('10000000-0000-0000-0000-000000000002', 0, 0, pg_catalog.now())
+on conflict (user_id) do update
+set revision = excluded.revision,
+    restore_epoch = excluded.restore_epoch,
+    updated_at = excluded.updated_at;
+
 grant usage on schema extensions to authenticated;
 grant execute on all functions in schema extensions to authenticated;
 

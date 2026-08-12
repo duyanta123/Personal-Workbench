@@ -1,86 +1,70 @@
 # 个人工作台
 
-一款集每日计划、习惯打卡、记账、长期目标与内容记录于一体的个人效率工作台。支持 PWA 安装、离线写队列与分块数据恢复，数据通过 Supabase（PostgreSQL + RLS）云端同步。账号采用邀请制，仅限受信后台开通。
+[![CI](https://github.com/duyanta123/Personal-Workbench/actions/workflows/ci.yml/badge.svg)](https://github.com/duyanta123/Personal-Workbench/actions/workflows/ci.yml)
 
-## 功能特性
+一个面向个人长期使用的效率工作台，将待办、习惯、记账、目标、笔记、刷题、健身和番茄钟放在同一套数据模型中。应用采用邀请制账号、Supabase 云端同步和 PWA 离线缓存，并针对重复请求、多设备恢复、弱网写入和数据库权限做了专门设计。
 
-- **首页总览**：今日问候、时钟、专注清单、快速记录、习惯周视图、待办进度、月度开销与健身摘要
-- **每日计划**：待办管理，支持优先级、置顶、截止日期与拖拽排序
-- **习惯打卡**：习惯管理 + 每日打卡，首页提供本周打卡趋势
-- **记账**：收入/支出记录、自定义分类、月度预算与开销统计
-- **长期目标**：目标进度追踪与可视化进度条
-- **内容记录**：笔记/灵感，支持标签、置顶与多种排版（default / feature / quote）
-- **刷题记录**：算法题进度管理，支持平台、难度与五种状态
-- **健身记录**：训练会话 + 动作明细 + 身体指标（体重/体脂）
-- **番茄钟**：自定义专注/短休/长休时长与循环轮数，支持关联今日待办
-- **洞察复盘**：多维度数据统计与趋势分析
-- **全局搜索**：跨模块快速检索
+## 核心能力
 
-**数据可靠性**
+| 模块 | 能力 |
+| --- | --- |
+| 工作台首页 | 今日待办、专注清单、习惯概览、月度开销、健身摘要和快捷记录 |
+| 每日计划 | 优先级、截止日期、置顶、拖拽排序、完成统计和稳定游标分页 |
+| 习惯打卡 | 每日打卡、补卡、连续记录和近 7 天趋势 |
+| 记账 | 收支记录、自定义分类、月度预算和分类统计 |
+| 长期目标 | 目标进度、增量记录、置顶和完成状态 |
+| 内容记录 | 笔记、标签、图片链接、置顶和多种内容布局 |
+| 刷题记录 | 平台、难度、状态、标签、链接和完成日期 |
+| 健身记录 | 训练、动作、组数、次数、重量、时长和身体指标 |
+| 番茄钟 | 自定义专注/休息周期、待办关联、跨午夜和重启恢复 |
+| 洞察复盘 | 跨模块统计、趋势和文本替代信息 |
+| 全局搜索 | 跨模块检索并直接定位原始记录 |
 
-- **离线写队列（outbox）**：写入先落 IndexedDB，联网后自动同步；带幂等 ID 与恢复纪元校验，弱网不丢写、不重复计数
-- **数据备份**：完整 JSON 备份（含头像）、记账/待办 CSV 导出、分块断点式恢复（revision 冲突检测）
-- **头像历史**：自定义头像上传，保留 5 张历史，可切换与删除
-- **深链接恢复**：路由级持久化，刷新/跳转不丢状态
+## 可靠性与安全
 
-**账号与安全**
+- 非幂等操作使用持久化 IndexedDB outbox，携带稳定 `operationId`；服务端通过操作回执保证重复提交只生效一次。
+- 每次数据恢复都会递增 `restore_epoch`，恢复前排队的旧设备操作无法重新写回。
+- 备份恢复采用 `begin -> stage chunks -> finalize/abort` 协议，包含 revision 冲突检查、分块摘要和原子替换。
+- TanStack Query 成功结果按用户持久化 7 天；离线重开仅允许最后登录用户读取缓存数据。
+- Supabase RLS 隔离所有业务数据；`anon` 无业务表权限，敏感写入通过收紧后的 `security definer` RPC 完成。
+- 账号采用邀请制，公开注册关闭，密码至少 12 位，并提供邀请接受、忘记密码和密码重置流程。
+- PWA 使用提示式更新，避免 Service Worker 自动激活导致旧页面懒加载 chunk 失效。
+- 生产部署模板包含 CSP、`nosniff`、Referrer Policy、Permissions Policy、SPA 回退和静态资源缓存策略。
 
-- 邀请制登录（公开注册关闭）、密码找回与重置（`/update-password` 回调）
-- 最小 12 位密码强度约束
-- 全量 RLS 策略 + security definer RPC 收紧，anon 无任何业务表权限
+## 运行架构
 
-**体验**
+```mermaid
+flowchart LR
+  UI["React / PWA"] --> Query["TanStack Query"]
+  Query --> API["Supabase Data API"]
+  UI --> Local["IndexedDB 用户缓存"]
+  UI --> Outbox["IndexedDB Outbox"]
+  Outbox --> RPC["幂等操作 RPC"]
+  API --> DB["PostgreSQL + RLS"]
+  RPC --> DB
+  UI --> Restore["分块恢复 RPC"]
+  Restore --> Private["private 暂存与回执表"]
+  Private --> DB
+  UI --> Storage["Supabase Storage"]
+```
 
-- PWA 可安装，带更新提示（手动刷新）、明暗主题、侧栏折叠
-- 全局错误边界，构建产物按供应商分包
+前端列表使用两种互不重叠的游标路径：普通业务表通过 PostgREST 复合谓词分页；刷题列表因多条件过滤和 `NULLS LAST` 排序，使用 `get_practice_page_cursor` RPC。测试会固定这一调用边界，避免双轨逻辑变成死代码。
 
 ## 技术栈
 
 | 分类 | 技术 |
 | --- | --- |
-| 前端框架 | React 18 + TypeScript |
-| 构建工具 | Vite 6 |
-| 路由 | React Router v7 |
-| 状态管理 | Zustand + TanStack Query |
+| 前端 | React 18、TypeScript、Vite 6 |
+| 路由 | React Router 7 |
+| 服务端状态 | TanStack Query |
+| 客户端状态 | Zustand |
 | 样式 | Tailwind CSS 4 |
-| 后端 | Supabase（PostgreSQL + Auth + Storage + RLS） |
-| 图标 | lucide-react |
-| 单元测试 | Vitest + Testing Library |
-| E2E 测试 | Playwright |
-| 数据库测试 | pgTAP（Supabase CLI） |
-| 静态检查 | ESLint 9 + typescript-eslint + jsx-a11y |
-| PWA | vite-plugin-pwa |
-
-## 项目结构
-
-```
-├── public/                 # 静态资源（PWA 图标、安全头、SPA 回退）
-├── src/
-│   ├── components/         # 布局与 UI 组件（含测试）
-│   │   ├── ui/             # 通用组件库
-│   ├── hooks/              # 数据请求与业务逻辑 hooks
-│   ├── lib/                # Supabase 客户端、outbox、本地存储、游标分页
-│   ├── pages/              # 页面（按路由划分）
-│   ├── stores/             # Zustand 全局状态
-│   ├── utils/              # 纯逻辑工具（含测试）
-│   ├── test/               # 测试配置
-│   ├── App.tsx             # 路由入口
-│   └── types.ts            # 全局类型定义
-├── e2e/                    # Playwright 端到端测试
-├── scripts/                # 迁移一致性检查等脚本（含测试）
-├── supabase/
-│   ├── migrations/         # 核心迁移（可立即发布）
-│   ├── deferred_migrations/ # 延迟迁移（按 DEPLOYMENT.md 节奏发布）
-│   ├── deferred_tests/     # 延迟迁移配套测试
-│   ├── tests/database/     # pgTAP 数据库测试
-│   └── config.toml         # Supabase CLI 本地配置
-├── .env.example            # 环境变量示例
-├── DEPLOYMENT.md           # 部署顺序与平台说明
-├── eslint.config.js
-├── playwright.config.ts
-├── vercel.json
-└── vite.config.ts
-```
+| 后端 | Supabase Auth、PostgreSQL、Storage、RLS、RPC |
+| PWA | vite-plugin-pwa / Workbox |
+| 单元与组件测试 | Vitest、Testing Library |
+| E2E | Playwright，固定使用系统 Chrome |
+| 数据库测试 | Supabase CLI、pgTAP |
+| 静态检查 | ESLint 9、typescript-eslint、React Hooks、jsx-a11y |
 
 ## 快速开始
 
@@ -88,98 +72,177 @@
 
 - Node.js 22+
 - npm
-- supabase CLI（数据库相关操作）
+- 本机 Google Chrome，用于 Playwright E2E
+- Supabase CLI，仅在执行数据库操作时需要
+- Docker 或 Podman，仅在本地重建和测试数据库时需要
 
-### 安装依赖
+项目不会通过 Playwright 下载 Chromium。本地和 CI 的 E2E 均使用系统 Chrome。
+
+### 安装与配置
 
 ```bash
-npm install
+git clone https://github.com/duyanta123/Personal-Workbench.git
+cd Personal-Workbench
+npm ci
 ```
 
-### 配置环境变量
+基于 `.env.example` 创建 `.env`：
 
-复制 `.env.example` 为 `.env`，填入 Supabase 项目信息（Supabase 控制台 → Project Settings → API）：
-
-```
-VITE_SUPABASE_URL=https://你的项目ref.supabase.co
-VITE_SUPABASE_ANON_KEY=你的anon公钥
+```dotenv
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-> 注意：`VITE_` 前缀的变量会打包进前端，只允许填 anon 公钥，绝不要填 service_role 密钥。
+`VITE_` 变量会进入浏览器构建，只能放公开的 anon key。不要把数据库密码、service role key 或其他服务端密钥写入 `.env` 的 `VITE_` 变量。
 
-### 启动开发服务器
+启动开发服务器：
 
 ```bash
 npm run dev
 ```
 
-访问 http://localhost:5173
+访问 [http://localhost:5173](http://localhost:5173)。账号需要由 Supabase Dashboard 或受信后台邀请，登录页不提供公开注册。
 
-> 账号采用邀请制：需在 Supabase Auth 中通过 Invite User 创建账号，公开注册已在配置中关闭。
-
-## 数据库
-
-数据库使用 Supabase CLI 管理：
-
-```bash
-# 登录并关联远程项目
-supabase login
-supabase link --project-ref <你的项目ref>
-
-# 推送迁移前先核对本地/远程历史一致
-npm run check:migrations
-
-# 审阅后推送
-supabase db push --dry-run
-supabase db push
-```
-
-- `supabase/migrations/`：核心迁移，CI 从零重建验证，可随时发布。
-- `supabase/deferred_migrations/`：延迟迁移（如头像桶转私有、最终撤权），不会自动应用，按 `DEPLOYMENT.md` 的发布节奏移入核心目录后发布。
-
-详细发布顺序与各平台（Vercel / Netlify / COS / OSS）配置见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
-
-## 测试
-
-```bash
-# 单元与组件测试（Vitest）
-npm test
-
-# 脚本测试（Node 内置 test runner）
-npm run test:scripts
-
-# 端到端测试（Playwright，需本机 Chrome）
-npm run test:e2e
-
-# 数据库测试（pgTAP，需 Docker；CI 已覆盖）
-supabase db start
-supabase test db
-```
-
-## 构建与部署
-
-```bash
-# 静态检查 + 类型检查 + 全部测试 + 构建（CI 同款）
-npm run ci
-
-# 仅构建
-npm run build
-```
-
-构建产物输出到 `dist/`，可部署到 Vercel、Netlify 或腾讯云 COS / 阿里云 OSS。仓库已内置 `vercel.json`、`public/_headers`、`public/_redirects`（SPA 回退 + 安全头 + CSP）。部署前请先完成 Supabase Auth 的 Site URL / Redirect URL 配置，详见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
-
-## 脚本命令
+## 常用命令
 
 | 命令 | 说明 |
 | --- | --- |
-| `npm run dev` | 启动开发服务器 |
-| `npm run build` | 类型检查并构建 |
-| `npm run preview` | 本地预览构建产物 |
-| `npm run lint` | ESLint 检查（零警告） |
-| `npm run typecheck` | TypeScript 类型检查 |
-| `npm test` | 运行全部单元/组件测试 |
-| `npm run test:watch` | 测试监听模式 |
-| `npm run test:scripts` | 运行脚本测试 |
-| `npm run test:e2e` | 运行 Playwright E2E 测试 |
-| `npm run check:migrations` | 核对本地/远程迁移历史一致 |
-| `npm run ci` | 完整质量门禁（lint + typecheck + 测试 + 构建） |
+| `npm run dev` | 启动 Vite 开发服务器 |
+| `npm run build` | TypeScript 构建并生成生产产物 |
+| `npm run preview` | 本地预览 `dist/` |
+| `npm run lint` | 执行 ESLint，警告也会导致失败 |
+| `npm run typecheck` | 执行 TypeScript 类型检查 |
+| `npm test` | 运行 Vitest 单元与组件测试 |
+| `npm run test:watch` | 以监听模式运行 Vitest |
+| `npm run test:scripts` | 运行迁移解析等 Node 脚本测试 |
+| `npm run test:e2e` | 使用系统 Chrome 运行 Playwright E2E |
+| `npm run check:migrations` | 比较本地和已链接远程项目的迁移历史 |
+| `npm run ci` | lint、类型检查、脚本测试、Vitest 和生产构建 |
+
+## 数据库开发与发布
+
+链接 Supabase 项目：
+
+```bash
+supabase login
+supabase link --project-ref <project-ref>
+```
+
+发布数据库变更前必须依次执行：
+
+```bash
+# 1. 确认本地与远程迁移历史完全一致
+npm run check:migrations
+
+# 2. 审查即将应用的前向迁移
+supabase db push --dry-run
+
+# 3. 正式应用
+supabase db push
+
+# 4. 验证远程 schema
+supabase db lint --linked --level warning
+```
+
+数据库规则：
+
+1. 已应用到任何远程环境的迁移不得修改、重命名、压缩或删除。
+2. 所有修复通过新的前向迁移完成。
+3. `supabase/migrations/` 只包含可立即发布的核心迁移。
+4. `supabase/deferred_migrations/` 不会被 `db push` 自动应用，必须按发布窗口移入核心迁移目录。
+5. 私有头像切换和最终旧 RPC 撤权属于延迟迁移，发布条件及顺序见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+
+本地数据库验证需要 Docker 或 Podman：
+
+```bash
+supabase db start
+supabase db reset
+supabase db lint --local --level warning
+supabase test db
+```
+
+数据库测试覆盖匿名权限、双用户 RLS 隔离、私有 schema、头像目录、恢复权限、游标 RPC，以及重复 `operationId` 只写入一次。
+
+## 备份与恢复
+
+- 导出格式为 Backup V3；V1/V2 只作为兼容输入，由客户端归一化后走当前恢复协议。
+- JSON 文件上限为 40 MiB；每块最多 500 行或 1 MiB。
+- 单表最多 50,000 行，总计最多 200,000 行。
+- 头像最多 5 张，单张解码后不超过 5 MiB。
+- 恢复前必须处理本机未同步 outbox；丢弃未同步操作需要二次确认。
+- `finalize_restore` 会重新检查 revision、分块完整性和引用映射，并在单个事务中替换数据。
+
+## CI
+
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) 包含三个独立 job：
+
+- `frontend`：安装依赖，运行 `npm run ci` 和依赖安全审计。
+- `e2e`：确认 GitHub Runner 自带 Chrome，然后运行 Playwright；不安装 Chromium。
+- `database`：从零执行核心迁移、lint 和 pgTAP，再加入延迟迁移与配套测试重复验证。
+
+本地提交前建议至少运行：
+
+```bash
+npm run ci
+npm run test:e2e
+npm audit --audit-level=high
+```
+
+## 部署
+
+构建产物位于 `dist/`：
+
+```bash
+npm run build
+```
+
+仓库已提供：
+
+- `vercel.json`：Vercel SPA 回退、缓存与安全响应头。
+- `public/_redirects`、`public/_headers`：Netlify 回退、缓存与安全响应头。
+- [DEPLOYMENT.md](./DEPLOYMENT.md)：Vercel、Netlify、腾讯云 COS 和阿里云 OSS 的发布契约。
+
+部署前还必须在 Supabase Auth 中完成：
+
+- 关闭公开注册并保持邀请制。
+- 将 Site URL 设置为当前环境的精确域名。
+- 为 `/update-password` 配置精确回调白名单。
+- 若使用 Supabase 自定义域名，同步更新 CSP 的 `connect-src` 和 `img-src`。
+
+首次访问深链接必须由托管平台回退到 `index.html`，不能依赖用户已经安装 Service Worker。
+
+## 项目结构
+
+```text
+.
+|-- .github/workflows/       # 前端、E2E、数据库 CI
+|-- e2e/                     # Playwright 场景
+|-- public/                  # PWA 图标、SPA 回退与安全头模板
+|-- scripts/                 # 迁移一致性检查及脚本测试
+|-- src/
+|   |-- components/          # 布局、认证、PWA 和通用 UI
+|   |-- hooks/               # 查询、写入和业务流程 hooks
+|   |-- lib/                 # Supabase、outbox、本地缓存、游标和类型
+|   |-- pages/               # 按业务模块划分的页面
+|   |-- stores/              # Zustand 状态
+|   `-- utils/               # 校验、备份和统计等纯逻辑
+|-- supabase/
+|   |-- migrations/          # 核心前向迁移
+|   |-- deferred_migrations/ # 需要观察窗口的延迟迁移
+|   |-- deferred_tests/      # 延迟迁移配套 pgTAP
+|   `-- tests/database/      # 核心数据库测试
+|-- DEPLOYMENT.md            # 发布顺序和平台配置
+|-- playwright.config.ts
+|-- vercel.json
+`-- vite.config.ts
+```
+
+## 发布检查清单
+
+- `npm run ci`、系统 Chrome E2E 和依赖审计通过。
+- 数据库快照或可验证的恢复点已经创建。
+- `npm run check:migrations` 无差异，`db push --dry-run` 仅包含预期文件。
+- 远程 `supabase db lint --linked --level warning` 无错误或警告。
+- Supabase Auth Site URL、回调白名单和邀请制设置已核对。
+- 深链接、PWA 更新、离线只读、退出清理和密码恢复已在目标环境验证。
+- 延迟迁移只在 [DEPLOYMENT.md](./DEPLOYMENT.md) 的观察条件满足后发布。
