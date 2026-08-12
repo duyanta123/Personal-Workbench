@@ -20,6 +20,8 @@ import { cn } from '../lib/cn'
 import QueryError from '../components/ui/QueryError'
 import { useCurrentDate } from '../hooks/useCurrentDate'
 import { useWorkbenchInsights } from '../hooks/useWorkbenchSummary'
+import { useHabitStrengths } from '../hooks/useHabits'
+import { habitStrengthInsightText } from '../utils/habitStrength'
 
 const BODY_PART_LABEL: Record<string, string> = {
   chest: '胸',
@@ -74,9 +76,10 @@ export default function Insight() {
   const today = useCurrentDate()
   const month = today.slice(0, 7)
   const insights = useWorkbenchInsights(today, month)
-  const loading = insights.isLoading
+  const strengths = useHabitStrengths(today)
+  const loading = insights.isLoading || strengths.isLoading
 
-  if (insights.isError) {
+  if (insights.isError || strengths.isError) {
     return (
       <div className="space-y-4">
         <PageHeader
@@ -84,7 +87,7 @@ export default function Insight() {
           title="洞察复盘"
           description="各模块进展一览 · 记录 → 执行 → 统计 → 反馈"
         />
-        <QueryError onRetry={() => insights.refetch()} />
+        <QueryError onRetry={() => { insights.refetch(); strengths.refetch() }} />
       </div>
     )
   }
@@ -101,6 +104,8 @@ export default function Insight() {
   const habitTotal = data?.habits.total ?? 0
   const habitPct = habitTotal ? Math.round((habitDone / habitTotal) * 100) : 0
   const topStreaks = (data?.habits.top_streaks ?? []).slice(0, 3).map((row) => ({ name: row.name, s: row.streak }))
+  const strengthSummary = strengths.data?.summary
+  const strengthText = strengthSummary ? habitStrengthInsightText(strengthSummary) : null
 
   // 记账
   const monthIncome = data?.ledger.income ?? 0
@@ -249,6 +254,34 @@ export default function Insight() {
             </ul>
           </Card>
         </div>
+      )}
+
+      {!loading && strengthSummary && (
+        <>
+          <SectionTitle zh="习惯强度洞察" en="Habit Strength" />
+          <Card padding="md">
+            {strengthSummary.averageScore === null ? (
+              <p className="text-sm text-ink-3">习惯记录仍在积累，满 3 个有效观察日后生成强度洞察。</p>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-[160px_minmax(0,1fr)]">
+                <div className="flex items-center gap-3">
+                  <Ring value={strengthSummary.averageScore} size={76} color="var(--m2)">
+                    <span className="text-sm font-bold text-ink">{strengthSummary.averageScore}</span>
+                  </Ring>
+                  <div className="text-xs text-ink-3">平均强度<br /><span className="font-semibold text-ink">{strengthSummary.eligibleCount} 个习惯</span></div>
+                </div>
+                <div>
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="rounded-xl bg-m1/10 p-2 text-ink-2">强劲<br /><b className="text-ink">{strengthSummary.counts.strong}</b></div>
+                    <div className="rounded-xl bg-m3/10 p-2 text-ink-2">稳定<br /><b className="text-ink">{strengthSummary.counts.stable}</b></div>
+                    <div className="rounded-xl bg-danger/10 p-2 text-ink-2">需关注<br /><b className="text-ink">{strengthSummary.counts.attention}</b></div>
+                  </div>
+                  {strengthText && <p className="mt-3 text-xs leading-relaxed text-ink-2">{strengthText}</p>}
+                </div>
+              </div>
+            )}
+          </Card>
+        </>
       )}
     </div>
   )

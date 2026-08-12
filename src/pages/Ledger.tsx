@@ -32,11 +32,7 @@ import QueryError from '../components/ui/QueryError'
 import { useSearchParams } from 'react-router-dom'
 import { useCurrentDate, useTodayDateField } from '../hooks/useCurrentDate'
 import { useClampPage } from '../hooks/useClampPage'
-
-const BUILTIN_CATS = {
-  expense: ['餐饮', '交通', '购物', '居住', '娱乐', '学习', '医疗', '其他'],
-  income: ['工资', '奖金', '理财', '其他']
-} as const
+import { BUILTIN_LEDGER_CATEGORIES } from '../utils/ledgerCategories'
 
 type Kind = LedgerEntry['kind']
 
@@ -82,7 +78,7 @@ export default function Ledger() {
   const todayExpense = summaryQuery.data?.dailyExpense.find((row) => row.date === currentDate)?.total ?? 0
 
   const customCats = useMemo(() => prefs?.categories?.[kind] ?? [], [kind, prefs?.categories])
-  const cats = useMemo(() => mergeCategories(BUILTIN_CATS[kind], customCats), [kind, customCats])
+  const cats = useMemo(() => mergeCategories(BUILTIN_LEDGER_CATEGORIES[kind], customCats), [kind, customCats])
 
   const catTotals = useMemo(() => {
     return summaryQuery.data?.categoryExpense ?? []

@@ -7,9 +7,11 @@ import type { Habit, HabitLog } from '../types'
 import { useAuth } from './useAuth'
 import { useCurrentDate } from './useCurrentDate'
 import { rpcArray, rpcNumber, rpcRecord } from '../lib/rpcSchemas'
+import { calculateHabitStrengths, summarizeHabitStrengths } from '../utils/habitStrength'
 
 export const habitsKey = (userId: string | null) => ['habits', userId] as const
 export const habitLogsKey = (userId: string | null) => ['habit_logs', userId] as const
+export const habitStrengthsKey = (userId: string | null, date: string) => ['habit_strengths', userId, date] as const
 export const HABITS_PAGE_SIZE = 50
 const habitsCursorScope = (userId: string | null, query: string) => cursorScope(['habits', userId, query.trim().toLowerCase()])
 const habitsOrder = [
@@ -33,6 +35,7 @@ function linkedHabitKeys(userId: string | null) {
     habitLogsKey(userId),
     ['dashboard_summary', userId] as const,
     ['workbench_insights', userId] as const,
+    ['habit_strengths', userId] as const,
     ['focus_items', userId] as const
   ]
 }
@@ -220,6 +223,48 @@ export function useHabitStats(date: string) {
       rpcNumber(value.month_logged_days, 'habit stats.month_logged_days')
       rpcArray(value.streaks, 'habit stats.streaks')
       return value as unknown as HabitStats
+    },
+    enabled: !!supabase && !!userId
+  })
+}
+
+async function collectHabitPages<T>(read: (from: number, to: number) => Promise<T[]>) {
+  const pageSize = 500
+  const rows: T[] = []
+  for (let from = 0; ; from += pageSize) {
+    const page = await read(from, from + pageSize - 1)
+    rows.push(...page)
+    if (page.length < pageSize) return rows
+  }
+}
+
+export function useHabitStrengths(date: string) {
+  const { userId } = useAuth()
+  return useQuery({
+    queryKey: habitStrengthsKey(userId, date),
+    queryFn: async () => {
+      const start = dateMinus(date, 29)
+      const [habits, logs] = await Promise.all([
+        collectHabitPages<Habit>(async (from, to) => {
+          const { data, error } = await supabase!.from('habits').select('*').order('id', { ascending: true }).range(from, to)
+          if (error) throw error
+          return data as Habit[]
+        }),
+        collectHabitPages<HabitLog>(async (from, to) => {
+          const { data, error } = await supabase!
+            .from('habit_logs')
+            .select('*')
+            .gte('log_date', start)
+            .lte('log_date', date)
+            .order('log_date', { ascending: true })
+            .order('id', { ascending: true })
+            .range(from, to)
+          if (error) throw error
+          return data as HabitLog[]
+        })
+      ])
+      const rows = calculateHabitStrengths(habits, logs, date)
+      return { rows, summary: summarizeHabitStrengths(rows) }
     },
     enabled: !!supabase && !!userId
   })

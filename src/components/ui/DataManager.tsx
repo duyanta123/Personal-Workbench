@@ -2,9 +2,11 @@ import { useRef, useState } from 'react'
 import { Database, Download, Upload, X } from 'lucide-react'
 import { useImportData } from '../../hooks/useImportData'
 import { useToastStore } from '../../stores/toast'
-import { buildCSV, buildJSON, downloadFile } from '../../utils/export'
+import { buildICalendar, buildJSON, downloadFile } from '../../utils/export'
 import { backupCounts, createBackupV3, fetchAllTableRows, MAX_BACKUP_BYTES, normalizeBackup } from '../../utils/backup'
-import type { LedgerEntry, Todo } from '../../types'
+import type { Habit, Todo, WorkoutSession } from '../../types'
+import { buildStructuredCSV, STRUCTURED_EXPORT_OPTIONS } from '../../utils/structuredExport'
+import type { StructuredExportKind } from '../../utils/structuredExport'
 import Button from './Button'
 import Modal from './Modal'
 
@@ -19,6 +21,9 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
   const push = useToastStore((s) => s.push)
   const fileRef = useRef<HTMLInputElement>(null)
   const [exporting, setExporting] = useState(false)
+  const [format, setFormat] = useState<'csv' | 'ics'>('csv')
+  const [dataset, setDataset] = useState<StructuredExportKind>('todos')
+  const [includeCompleted, setIncludeCompleted] = useState(false)
 
   async function exportJSON() {
     setExporting(true)
@@ -33,47 +38,26 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
     }
   }
 
-  async function exportLedgerCSV() {
+  async function exportSelected() {
     setExporting(true)
     try {
-    const entries = await fetchAllTableRows<LedgerEntry>('ledger_entries')
-    const rows = entries.map((e) => [
-      e.entry_date,
-      e.kind === 'expense' ? '支出' : '收入',
-      e.category,
-      e.amount,
-      e.note ?? ''
-    ])
-    downloadFile(
-      `记账-${stamp()}.csv`,
-      buildCSV(['日期', '类型', '分类', '金额', '备注'], rows),
-      'text/csv;charset=utf-8'
-    )
-    push({ kind: 'success', message: '记账 CSV 已下载' })
+      if (format === 'ics') {
+        const todos = await fetchAllTableRows<Todo>('todos')
+        const calendar = buildICalendar(todos, { includeCompleted })
+        downloadFile(`待办日历-${stamp()}.ics`, calendar, 'text/calendar;charset=utf-8')
+        push({ kind: 'success', message: '待办日历 ICS 已下载' })
+        return
+      }
+      const rows = await fetchAllTableRows<Record<string, unknown>>(dataset)
+      const relations: { habits?: Habit[]; workout_sessions?: WorkoutSession[] } = {}
+      if (dataset === 'habit_logs') relations.habits = await fetchAllTableRows<Habit>('habits')
+      if (dataset === 'workout_exercises') relations.workout_sessions = await fetchAllTableRows<WorkoutSession>('workout_sessions')
+      const csv = buildStructuredCSV(dataset, rows as never[], relations)
+      const option = STRUCTURED_EXPORT_OPTIONS.find((item) => item.value === dataset)!
+      downloadFile(`${option.filename}-${stamp()}.csv`, csv, 'text/csv;charset=utf-8')
+      push({ kind: 'success', message: `${option.label} CSV 已下载` })
     } catch (error) {
-      push({ kind: 'error', message: `CSV 导出失败：${(error as Error).message}` })
-    } finally { setExporting(false) }
-  }
-
-  async function exportTodosCSV() {
-    setExporting(true)
-    try {
-    const todos = await fetchAllTableRows<Todo>('todos')
-    const rows = todos.map((t) => [
-      t.done ? '已完成' : '未完成',
-      t.level,
-      t.text,
-      t.due_date ?? '',
-      t.updated_at.slice(0, 10)
-    ])
-    downloadFile(
-      `待办-${stamp()}.csv`,
-      buildCSV(['状态', '优先级', '内容', '截止日期', '更新时间'], rows),
-      'text/csv;charset=utf-8'
-    )
-    push({ kind: 'success', message: '待办 CSV 已下载' })
-    } catch (error) {
-      push({ kind: 'error', message: `CSV 导出失败：${(error as Error).message}` })
+      push({ kind: 'error', message: `导出失败：${(error as Error).message}` })
     } finally { setExporting(false) }
   }
 
@@ -125,15 +109,34 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
                   <Download size={14} />
                   全部数据 (JSON)
                 </Button>
-                <Button size="sm" variant="secondary" onClick={exportLedgerCSV} disabled={exporting || importData.isPending}>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <label htmlFor="export-format" className="text-xs text-ink-2">格式
+                  <select id="export-format" value={format} onChange={(event) => setFormat(event.target.value as 'csv' | 'ics')} className="mt-1 w-full rounded-xl border border-border bg-page px-3 py-2 text-sm text-ink">
+                    <option value="csv">CSV 表格</option>
+                    <option value="ics">ICS 待办日历</option>
+                  </select>
+                </label>
+                {format === 'csv' ? (
+                  <label htmlFor="export-dataset" className="text-xs text-ink-2">数据集
+                    <select id="export-dataset" value={dataset} onChange={(event) => setDataset(event.target.value as StructuredExportKind)} className="mt-1 w-full rounded-xl border border-border bg-page px-3 py-2 text-sm text-ink">
+                      {STRUCTURED_EXPORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                ) : (
+                  <label className="flex items-center gap-2 self-end rounded-xl border border-border px-3 py-2 text-xs text-ink-2">
+                    <input type="checkbox" checked={includeCompleted} onChange={(event) => setIncludeCompleted(event.target.checked)} />
+                    包含已完成待办
+                  </label>
+                )}
+              </div>
+              <div className="mt-2">
+                <Button size="sm" variant="secondary" onClick={exportSelected} disabled={exporting || importData.isPending}>
                   <Download size={14} />
-                  记账 CSV
-                </Button>
-                <Button size="sm" variant="secondary" onClick={exportTodosCSV} disabled={exporting || importData.isPending}>
-                  <Download size={14} />
-                  待办 CSV
+                  {exporting ? '导出中…' : '下载所选文件'}
                 </Button>
               </div>
+              <p className="mt-2 text-[11px] text-ink-3">CSV/ICS 仅用于数据互通，不支持恢复；完整恢复请使用 JSON Backup V3。</p>
             </div>
 
             <div className="border-t border-border pt-3">

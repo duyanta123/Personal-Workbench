@@ -31,7 +31,7 @@ export default function Modal({
     document.body.style.overflow = 'hidden'
     const panel = panelRef.current
     const timer = window.setTimeout(() => {
-      const autofocus = panel?.querySelector<HTMLElement>('[autofocus]')
+      const autofocus = panel?.querySelector<HTMLElement>('[data-autofocus]')
       const first = autofocus ?? panel?.querySelector<HTMLElement>(FOCUSABLE)
       ;(first ?? panel)?.focus()
     })

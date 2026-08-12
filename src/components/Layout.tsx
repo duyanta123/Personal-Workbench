@@ -33,6 +33,7 @@ import AvatarPicker from './ui/AvatarPicker'
 import ToastHost from './ui/ToastHost'
 import GlobalSearch from './ui/GlobalSearch'
 import DataManager from './ui/DataManager'
+import QuickCaptureDialog from './ui/QuickCaptureDialog'
 import Modal from './ui/Modal'
 import { cancelAllPendingDeletes } from '../hooks/useDeferredDelete'
 import { useToastStore } from '../stores/toast'
@@ -42,6 +43,7 @@ import { discardPendingOperations, pendingOperationCount } from '../lib/outbox'
 import { clearUserLocalData } from '../lib/localData'
 import { clearPomodoroRuntime } from '../utils/pomodoroRuntime'
 import { queryClient } from '../lib/queryClient'
+import { useQuickCaptureShortcut } from '../hooks/useQuickCaptureShortcut'
 
 interface NavItem {
   to: string
@@ -71,6 +73,7 @@ export default function Layout() {
   const online = useOnline()
   const drawerOpen = useUiStore((s) => s.drawerOpen)
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen)
+  useQuickCaptureShortcut()
   const location = useLocation()
   const currentTitle = NAV.find((n) => n.to === location.pathname)?.label ?? '个人工作台'
   const [searchOpen, setSearchOpen] = useState(false)
@@ -438,6 +441,7 @@ export default function Layout() {
       <ToastHost />
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
       <DataManager open={dataOpen} onClose={() => setDataOpen(false)} />
+      <QuickCaptureDialog />
     </div>
   )
 }

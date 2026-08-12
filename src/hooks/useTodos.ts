@@ -5,6 +5,7 @@ import type { Priority, Todo } from '../types'
 import { useAuth } from './useAuth'
 import { rpcArray, rpcRecord } from '../lib/rpcSchemas'
 import { afterCursor, cursorScope, cursorToken, getPageCursor, rememberPageCursor } from '../lib/cursorPagination'
+import { validateTodoCreate } from '../utils/createValidation'
 
 export const TODOS_PAGE_SIZE = 50
 export const todosKey = (userId: string | null) => ['todos', userId] as const
@@ -150,13 +151,7 @@ export function useAddTodo() {
   return useMutation({
     mutationFn: async (input: NewTodo) => {
       if (!userId) throw new Error('未登录')
-      return enqueueOperation<Todo>(userId, 'todo.create', {
-        text: input.text,
-        level: input.level,
-        due_date: input.due_date ?? null,
-        done: input.done ?? false,
-        pinned: input.pinned ?? false
-      })
+      return enqueueOperation<Todo>(userId, 'todo.create', validateTodoCreate(input))
     },
     onSuccess: () => linkedTodoKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })

@@ -6,6 +6,7 @@ import { useAuth } from './useAuth'
 import { localDayRange } from '../utils/localDayRange'
 import { LIMITS, requireLength, safeExternalUrl, validateTags } from '../utils/validation'
 import { afterCursor, cursorScope, cursorToken, getPageCursor, rememberPageCursor } from '../lib/cursorPagination'
+import { validateNoteCreate } from '../utils/createValidation'
 
 export const NOTES_PAGE_SIZE = 50
 export const notesKey = (userId: string | null) => ['notes', userId] as const
@@ -138,15 +139,7 @@ export function useAddNote() {
       image_url?: string | null
     }) => {
       if (!userId) throw new Error('未登录')
-      requireLength(input.body, LIMITS.body, '正文', 1)
-      if (input.title) requireLength(input.title, LIMITS.title, '标题')
-      validateTags(input.tags)
-      safeExternalUrl(input.image_url)
-      return enqueueOperation<Note>(userId, 'note.create', {
-        ...input,
-        pinned: input.pinned ?? false,
-        layout: input.layout ?? 'default'
-      })
+      return enqueueOperation<Note>(userId, 'note.create', validateNoteCreate(input))
     },
     onSuccess: () => linkedNoteKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })

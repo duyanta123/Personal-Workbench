@@ -4,6 +4,7 @@ import { enqueueOperation } from '../lib/outbox'
 import { afterCursor, cursorScope, cursorToken, getPageCursor, rememberPageCursor } from '../lib/cursorPagination'
 import type { LedgerEntry } from '../types'
 import { useAuth } from './useAuth'
+import { validateLedgerCreate } from '../utils/createValidation'
 
 export const LEDGER_PAGE_SIZE = 50
 export const ledgerKey = (userId: string | null) => ['ledger_entries', userId] as const
@@ -134,7 +135,7 @@ export function useAddLedgerEntry() {
   return useMutation({
     mutationFn: async (input: NewLedgerEntry) => {
       if (!userId) throw new Error('未登录')
-      return enqueueOperation<LedgerEntry>(userId, 'ledger.create', { ...input })
+      return enqueueOperation<LedgerEntry>(userId, 'ledger.create', validateLedgerCreate(input))
     },
     onSuccess: () => linkedLedgerKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })

@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom'
+import { useState } from 'react'
 import {
   Check,
   Dumbbell,
@@ -27,6 +28,9 @@ import OverviewTile from '../components/ui/OverviewTile'
 import FitnessTile from '../components/ui/FitnessTile'
 import { useCurrentDate, useCurrentHour } from '../hooks/useCurrentDate'
 import { useDashboardSummary } from '../hooks/useWorkbenchSummary'
+import { useUiStore } from '../stores/ui'
+import { useAuth } from '../hooks/useAuth'
+import Input from '../components/ui/Input'
 
 /** 首页快捷记录：4 个按钮直达对应模块（页面新建表单常驻） */
 const QUICK_ADD: { to: string; icon: LucideIcon; name: string; cls: string }[] = [
@@ -38,12 +42,20 @@ const QUICK_ADD: { to: string; icon: LucideIcon; name: string; cls: string }[] =
 
 function QuickAdd() {
   const navigate = useNavigate()
+  const [source, setSource] = useState('')
+  const openQuickCapture = useUiStore((state) => state.openQuickCapture)
+  const { canWrite } = useAuth()
   return (
     <div className="flex flex-col rounded-2xl border border-border bg-surface p-5">
       <div className="flex items-center gap-2">
         <Plus size={15} className="text-ink-3" />
         <div className="text-sm font-extrabold text-ink">快速记录</div>
       </div>
+      <form className="mt-3 flex gap-2" onSubmit={(event) => { event.preventDefault(); if (!source.trim() || !canWrite) return; openQuickCapture(source.trim()); setSource('') }}>
+        <Input value={source} onChange={(event) => setSource(event.target.value)} placeholder={canWrite ? '一句话记录，如：午饭 45' : '离线只读，联网后可记录'} aria-label="智能快速记录" disabled={!canWrite} maxLength={100000} className="min-w-0 flex-1" />
+        <button type="submit" disabled={!canWrite || !source.trim()} className="rounded-xl bg-accent px-3 text-xs font-semibold text-white disabled:opacity-45">解析</button>
+      </form>
+      <p className="mt-1.5 text-[10px] text-ink-3">本地解析 · Ctrl/Cmd + K 随时打开</p>
       <div className="mt-3 grid flex-1 grid-cols-2 content-start gap-2.5">
         {QUICK_ADD.map((q) => (
           <button

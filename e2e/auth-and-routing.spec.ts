@@ -23,6 +23,49 @@ function token() {
   })}.e2e-signature`
 }
 
+async function mockAuthenticatedWorkbench(page: import('@playwright/test').Page, operations: string[] = []) {
+  await page.route('**/auth/v1/user', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ user }) })
+  })
+  await page.route('**/auth/v1/token**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ access_token: token(), refresh_token: 'refresh-token', expires_in: 3600, token_type: 'bearer', user })
+    })
+  })
+  await page.route('**/rest/v1/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'content-range': '0-0/0' }, body: '[]' })
+  })
+  // Playwright resolves the most recently registered matching route first.
+  await page.route('**/rest/v1/rpc/**', async (route) => {
+    const name = new URL(route.request().url()).pathname.split('/').at(-1)
+    if (name === 'apply_workbench_operation') {
+      const payload = JSON.parse(route.request().postData() ?? '{}') as { p_kind?: string }
+      operations.push(String(payload.p_kind ?? ''))
+    }
+    const payloads: Record<string, unknown> = {
+      get_user_sync_state: { revision: 0, restore_epoch: 0 },
+      get_dashboard_summary: {
+        today_todos: [], habits: [], habit_logs: [], weekly_habits: [], expense_categories: [],
+        overview: { todo_total: 0, todo_done: 0, habit_total: 0, habit_done: 0, goal_total: 0, goal_percent: 0, week_workouts: 0, ledger_total: 0, note_total: 0, problem_total: 0, workout_total: 0, total_records: 0, pinned_total: 0, month_income: 0, month_expense: 0 },
+        fitness: { total: 0, month_sessions: 0, month_minutes: 0, week_sessions: 0, week_volume: 0, body_parts: [], month_body_parts: [] }
+      },
+      get_today_todos: [],
+      get_focus_items: [],
+      apply_workbench_operation: { id: 'created-1' }
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payloads[name ?? ''] ?? {}) })
+  })
+  await page.route('**/storage/v1/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+  })
+  await page.goto(`/update-password#access_token=${token()}&refresh_token=refresh-token&expires_in=3600&token_type=bearer&type=invite`)
+  await expect(page.getByRole('heading', { name: '设置新密码' })).toBeVisible()
+  await page.goto('/')
+  await expect(page.getByLabel('智能快速记录')).toBeVisible()
+}
+
 test('first-load deep links fall back to the login page without a service worker', async ({ page }) => {
   await page.goto('/notes?focus=25000000-0000-0000-0000-000000000001')
   await expect(page).toHaveURL(/\/login$/)
@@ -142,4 +185,52 @@ test('logout warns about pending outbox data and clears user-scoped offline stat
     databaseExists: (await indexedDB.databases()).some((database) => database.name === `personal-workbench:${userId}`)
   }), user.id)
   expect(cleanup).toEqual({ lastUser: null, pomodoro: null, databaseExists: false })
+})
+
+test('quick capture opens from the dashboard and the global shortcut', async ({ page }) => {
+  await mockAuthenticatedWorkbench(page)
+  await page.getByLabel('智能快速记录').fill('中午和同事吃饭 45')
+  await page.getByRole('button', { name: '解析' }).click()
+  await expect(page.getByRole('dialog', { name: '智能快速记录' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '记账' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByLabel('金额')).toHaveValue('45')
+  await page.keyboard.press('Escape')
+
+  await page.keyboard.press('Control+k')
+  await expect(page.getByRole('dialog', { name: '智能快速记录' })).toBeVisible()
+  await expect(page.getByLabel('一句话记录')).toBeFocused()
+  await page.getByLabel('一句话记录').fill('午饭 45 打车 20')
+  await expect(page.getByRole('tab', { name: '记账' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '待办' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '笔记' })).toBeVisible()
+})
+
+test('data manager exposes structured CSV and one-time ICS choices', async ({ page }) => {
+  await mockAuthenticatedWorkbench(page)
+  await page.getByRole('button', { name: '数据备份' }).click()
+  await expect(page.getByLabel('格式')).toHaveValue('csv')
+  await expect(page.getByLabel('数据集').locator('option')).toHaveCount(10)
+  await page.getByLabel('格式').selectOption('ics')
+  await expect(page.getByLabel('包含已完成待办')).not.toBeChecked()
+  await expect(page.getByText('CSV/ICS 仅用于数据互通')).toBeVisible()
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: '下载所选文件' }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toMatch(/^待办日历-\d{8}\.ics$/)
+})
+
+test('quick capture confirms todo, ledger and note through the idempotent operation endpoint', async ({ page }) => {
+  const operations: string[] = []
+  await mockAuthenticatedWorkbench(page, operations)
+  for (const [source, button] of [
+    ['待办：明天交周报', '确认保存为待办'],
+    ['支出：午饭 45', '确认保存为记账'],
+    ['笔记：迁移顺利结束', '确认保存为笔记']
+  ] as const) {
+    await page.keyboard.press('Control+k')
+    await page.getByLabel('一句话记录').fill(source)
+    await page.getByRole('button', { name: button }).click()
+    await expect(page.getByRole('dialog', { name: '智能快速记录' })).toHaveCount(0)
+  }
+  expect(operations).toEqual(['todo.create', 'ledger.create', 'note.create'])
 })

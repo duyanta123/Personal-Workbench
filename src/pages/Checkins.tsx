@@ -10,6 +10,7 @@ import {
   useToggleHabitLogDate,
   useToggleHabitPin,
   useUpdateHabit,
+  useHabitStrengths,
   habitsListKey,
   HABITS_PAGE_SIZE
 } from '../hooks/useHabits'
@@ -61,6 +62,7 @@ export default function Checkins() {
   const { data: logs } = logsQuery
   const today = useCurrentDate()
   const statsQuery = useHabitStats(today)
+  const strengthsQuery = useHabitStrengths(today)
   const toggleLog = useToggleHabitLogDate()
   const togglePin = useToggleHabitPin()
   const addHabit = useAddHabit()
@@ -100,6 +102,7 @@ export default function Checkins() {
   const streakByHabit = new Map((statsQuery.data?.streaks ?? []).map((row) => [row.habit_id, row.streak]))
   const rankings = (statsQuery.data?.streaks ?? []).slice(0, 6)
   const habitTotal = statsQuery.data?.streaks.length ?? habitsQuery.data?.total ?? 0
+  const strengthByHabit = new Map((strengthsQuery.data?.rows ?? []).map((row) => [row.habitId, row]))
 
   const { requestDelete, isPending: isDeletePending, remainingSeconds } = useDeferredDelete<Habit, HabitPage>({
     key: habitsListKey(userId, page, deferredQuery),
@@ -179,8 +182,8 @@ export default function Checkins() {
         description="每天坚持一点点。"
       />
 
-      {(habitsQuery.isError || logsQuery.isError || statsQuery.isError) && (
-        <QueryError onRetry={() => { habitsQuery.refetch(); logsQuery.refetch(); statsQuery.refetch() }} />
+      {(habitsQuery.isError || logsQuery.isError || statsQuery.isError || strengthsQuery.isError) && (
+        <QueryError onRetry={() => { habitsQuery.refetch(); logsQuery.refetch(); statsQuery.refetch(); strengthsQuery.refetch() }} />
       )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -253,6 +256,7 @@ export default function Checkins() {
             const logged = byHabit.get(h.id) ?? new Set<string>()
             const rate = monthCompletion(logged, year, month, today)
             const Icon = resolveIcon(h.emoji)
+            const strength = strengthByHabit.get(h.id)
             return (
               <div
                 key={h.id}
@@ -321,6 +325,20 @@ export default function Checkins() {
                   <span className="mx-0.5">·</span>
                   <span className="tabular-nums">本月 {rate}%</span>
                 </div>
+
+                {strength && (
+                  <details className="mt-3 rounded-xl bg-nested px-3 py-2 text-xs">
+                    <summary className="cursor-pointer list-none font-medium text-ink-2">
+                      习惯强度：{strength.score === null ? '积累中' : `${strength.score} 分 · ${strength.band === 'strong' ? '强劲' : strength.band === 'stable' ? '稳定' : '需关注'}`}
+                    </summary>
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-center text-[11px] text-ink-3">
+                      <span>30 天完成率<br /><b className="text-ink">{strength.completionRate}%</b></span>
+                      <span>当前连续<br /><b className="text-ink">{strength.currentStreak} 天</b></span>
+                      <span>近 7 天<br /><b className="text-ink">{strength.recentRate}%</b></span>
+                    </div>
+                    {strength.score === null && <p className="mt-2 text-ink-3">记录满 3 个有效观察日后生成评分。</p>}
+                  </details>
+                )}
 
                 {/* 月度日历 */}
                 <div className="mt-4">
