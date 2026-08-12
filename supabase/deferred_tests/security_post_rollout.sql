@@ -40,16 +40,14 @@ select extensions.throws_ok(
   null,
   'user A cannot insert into user B avatar directory'
 );
-delete from storage.objects
-where bucket_id = 'avatars' and name = '10000000-0000-0000-0000-000000000002/b.webp';
-reset role;
-select extensions.ok(
-  exists (
-    select 1 from storage.objects
-    where bucket_id = 'avatars' and name = '10000000-0000-0000-0000-000000000002/b.webp'
-  ),
-  'user A cannot delete user B avatar object'
+select extensions.throws_ok(
+  $$delete from storage.objects
+    where bucket_id = 'avatars' and name = '10000000-0000-0000-0000-000000000002/b.webp'$$,
+  'P0001',
+  'Direct deletion from storage tables is not allowed. Use the Storage API instead.',
+  'direct storage table deletion is blocked'
 );
+reset role;
 
 select * from extensions.finish();
 rollback;
