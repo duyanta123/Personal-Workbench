@@ -87,3 +87,29 @@ export function checkLocalMigrations(names, now = new Date()) {
   }
   return errors
 }
+
+export function checkAppendOnlyMigrations(names, baselineNames) {
+  if (baselineNames.length === 0) return []
+
+  const errors = []
+  const current = new Set(names)
+  const baseline = new Set(baselineNames)
+  const lastBaselineName = baselineNames.at(-1)
+  const lastBaselineVersion = lastBaselineName?.match(MIGRATION_FILE_NAME)?.[1] ?? ''
+
+  for (const name of baselineNames) {
+    if (!current.has(name)) {
+      errors.push(`Committed migration was removed or renamed: ${name}`)
+    }
+  }
+
+  for (const name of names) {
+    if (baseline.has(name)) continue
+    const version = name.match(MIGRATION_FILE_NAME)?.[1] ?? ''
+    if (version && lastBaselineVersion && version <= lastBaselineVersion) {
+      errors.push(`Historical migration inserted: ${name} does not follow committed ${lastBaselineName}`)
+    }
+  }
+
+  return errors
+}

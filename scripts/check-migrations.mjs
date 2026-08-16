@@ -1,9 +1,19 @@
 import { execFileSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { checkLocalMigrations, parseMigrationList } from './migration-list.mjs'
+import { checkAppendOnlyMigrations, checkLocalMigrations, parseMigrationList } from './migration-list.mjs'
 
-const VERSION_OF = /^(\d{14})_/
+function gitOutput(args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  } catch {
+    return null
+  }
+}
 
 function readMigrationList() {
   const output = execFileSync('supabase', ['migration', 'list', '--linked', '--output-format', 'json'], {
@@ -24,26 +34,27 @@ function checkLinked() {
     }
     process.exitCode = 1
   } else {
-    console.log(`Migration history is consistent (${mismatches.length} core migrations).`)
+    console.log(`Migration history is consistent (${migrations.length} core migrations).`)
   }
 }
 
-/** 已提交基线：git 跟踪的迁移文件名（按版本序）。git 不可用时返回 null。 */
-function readTrackedMigrations() {
-  try {
-    const output = execFileSync('git', ['ls-files', '--', 'supabase/migrations'], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
-    return output
-      .split(/\r?\n/)
-      .filter((line) => line.endsWith('.sql'))
-      .map((line) => basename(line))
-      .sort()
-  } catch {
-    return null
-  }
+function readMigrationsAtRef(ref) {
+  const output = gitOutput(['ls-tree', '-r', '--name-only', ref, '--', 'supabase/migrations'])
+  if (output === null) return null
+  return output
+    .split(/\r?\n/)
+    .filter((line) => line.endsWith('.sql'))
+    .map((line) => basename(line))
+    .sort()
+}
+
+function readChangedMigrations(ref) {
+  const output = gitOutput(['diff', '--name-only', ref, '--', 'supabase/migrations'])
+  if (output === null) return null
+  return output
+    .split(/\r?\n/)
+    .filter((line) => line.endsWith('.sql'))
+    .map((line) => basename(line))
 }
 
 function checkLocalOnly() {
@@ -51,22 +62,21 @@ function checkLocalOnly() {
   const names = readdirSync(dir).filter((name) => name.endsWith('.sql')).sort()
   const errors = checkLocalMigrations(names)
 
-  // 基线对比：仅排序后的格式/重复检查无法发现历史回插（排序后依然有序）。
-  // 与 git 已提交列表对比：已提交文件不可删除/重命名，新增文件只能出现在尾部。
-  const tracked = readTrackedMigrations()
-  if (tracked === null) {
-    console.warn('git unavailable; skipped append-only baseline check.')
-  } else if (tracked.length > 0) {
-    const trackedSet = new Set(tracked)
-    for (const name of tracked) {
-      if (!names.includes(name)) errors.push(`Committed migration was removed or renamed: ${name}`)
-    }
-    const lastTrackedVersion = tracked[tracked.length - 1].match(VERSION_OF)?.[1] ?? ''
-    for (const name of names) {
-      if (trackedSet.has(name)) continue
-      const version = name.match(VERSION_OF)?.[1] ?? ''
-      if (version && lastTrackedVersion && version < lastTrackedVersion) {
-        errors.push(`Historical migration inserted: ${name} predates committed ${tracked[tracked.length - 1]}`)
+  // CI supplies the target-branch/push predecessor SHA. Local runs compare against HEAD.
+  const configuredBaseRef = process.env.MIGRATION_BASE_REF
+  const baseRef = configuredBaseRef && !/^0+$/.test(configuredBaseRef) ? configuredBaseRef : configuredBaseRef ? 'HEAD^' : 'HEAD'
+  const baseline = readMigrationsAtRef(baseRef)
+  const changed = readChangedMigrations(baseRef)
+  if (baseline === null || changed === null) {
+    const message = `Unable to read append-only migration baseline from ${baseRef}`
+    if (process.env.CI || process.env.MIGRATION_BASE_REF) errors.push(message)
+    else console.warn(`${message}; skipped outside CI.`)
+  } else {
+    errors.push(...checkAppendOnlyMigrations(names, baseline))
+    const baselineSet = new Set(baseline)
+    for (const name of changed) {
+      if (baselineSet.has(name) && names.includes(name)) {
+        errors.push(`Committed migration was modified: ${name}`)
       }
     }
   }
@@ -76,7 +86,7 @@ function checkLocalOnly() {
     process.exitCode = 1
     return
   }
-  console.log(`Local migration files are consistent (${names.length} files).`)
+  console.log(`Local migration files are consistent (${names.length} files; baseline ${baseRef}).`)
 }
 
 if (process.argv.includes('--local-only')) {

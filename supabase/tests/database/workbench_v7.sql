@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select extensions.plan(14);
+select extensions.plan(17);
 
 insert into auth.users (
   instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,raw_app_meta_data,raw_user_meta_data,is_super_admin
@@ -36,6 +36,28 @@ update public.todos set text='remote' where id='12000000-0000-0000-0000-00000000
 select extensions.is(
   public.apply_workbench_command_v2('13000000-0000-0000-0000-000000000003','12000000-0000-0000-0000-000000000001',0,'todo.update','{"text":"local"}'::jsonb,'{"text":"merged"}'::jsonb,3)->>'status',
   'conflict','same-field remote change conflicts'
+);
+
+select extensions.is(
+  public.apply_workbench_command_v2(
+    '13000000-0000-0000-0000-000000000005',
+    '12000000-0000-0000-0000-000000000005',
+    0,
+    'avatar.create',
+    '{"storage_path":"11000000-0000-0000-0000-000000000001/avatar-v2.webp"}'::jsonb
+  )->>'status',
+  'applied','V2 avatar create accepts the storage_path payload field'
+);
+select extensions.is(
+  (select storage_path from public.user_avatars
+    where user_id='11000000-0000-0000-0000-000000000001' and is_active),
+  '11000000-0000-0000-0000-000000000001/avatar-v2.webp',
+  'V2 avatar create stores the requested path'
+);
+select extensions.is(
+  (select pg_catalog.count(*) from public.user_avatars
+    where user_id='11000000-0000-0000-0000-000000000001'),
+  1::bigint,'V2 avatar create writes one avatar row'
 );
 
 select extensions.throws_ok(

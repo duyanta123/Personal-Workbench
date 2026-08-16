@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { checkLocalMigrations, parseMigrationList } from './migration-list.mjs'
+import { checkAppendOnlyMigrations, checkLocalMigrations, parseMigrationList } from './migration-list.mjs'
 
 test('parses structured Supabase migration output', () => {
   assert.deepEqual(parseMigrationList(`Initialising login role...\n${JSON.stringify({
@@ -75,4 +75,42 @@ test('rejects migration timestamps from the future', () => {
   const errors = checkLocalMigrations(['20260817000001_future.sql'], now)
   assert.equal(errors.length, 1)
   assert.match(errors[0], /in the future/)
+})
+
+test('accepts migrations appended after the target-branch baseline', () => {
+  const baseline = [
+    '20260813000001_init.sql',
+    '20260816000006_search.sql'
+  ]
+  assert.deepEqual(checkAppendOnlyMigrations([
+    ...baseline,
+    '20260817000001_next.sql'
+  ], baseline), [])
+})
+
+test('rejects a committed migration inserted before the target-branch tail', () => {
+  const baseline = [
+    '20260813000001_init.sql',
+    '20260816000006_search.sql'
+  ]
+  const errors = checkAppendOnlyMigrations([
+    '20260813000001_init.sql',
+    '20260815000001_backfill.sql',
+    '20260816000006_search.sql'
+  ], baseline)
+  assert.equal(errors.length, 1)
+  assert.match(errors[0], /Historical migration inserted/)
+})
+
+test('rejects removing or renaming a target-branch migration', () => {
+  const baseline = [
+    '20260813000001_init.sql',
+    '20260816000006_search.sql'
+  ]
+  const errors = checkAppendOnlyMigrations([
+    '20260813000001_init.sql',
+    '20260817000001_search_renamed.sql'
+  ], baseline)
+  assert.equal(errors.length, 1)
+  assert.match(errors[0], /removed or renamed/)
 })

@@ -7,19 +7,19 @@ select extensions.plan(20);
 
 -- ---------- 匹配算法：monthly month_day=31 压尾 ----------
 select extensions.is(
-  public.recurrence_occurrence_matches('monthly',1,'{}'::smallint[],31,'2026-01-31','2027-02-28'),
+  public.recurrence_occurrence_matches('monthly',1,'{}'::smallint[],31::smallint,'2026-01-31','2027-02-28'),
   true,'monthly day-31 clamps to Feb 28 in a common year');
 select extensions.is(
-  public.recurrence_occurrence_matches('monthly',1,'{}'::smallint[],31,'2026-01-31','2028-02-29'),
+  public.recurrence_occurrence_matches('monthly',1,'{}'::smallint[],31::smallint,'2026-01-31','2028-02-29'),
   true,'monthly day-31 clamps to Feb 29 in a leap year');
 select extensions.is(
-  public.recurrence_occurrence_matches('monthly',1,'{}'::smallint[],31,'2026-01-31','2026-04-30'),
+  public.recurrence_occurrence_matches('monthly',1,'{}'::smallint[],31::smallint,'2026-01-31','2026-04-30'),
   true,'monthly day-31 clamps to Apr 30');
 select extensions.is(
-  public.recurrence_occurrence_matches('monthly',1,'{}'::smallint[],31,'2026-01-31','2026-03-31'),
+  public.recurrence_occurrence_matches('monthly',1,'{}'::smallint[],31::smallint,'2026-01-31','2026-03-31'),
   true,'monthly day-31 matches a real 31st');
 select extensions.is(
-  public.recurrence_occurrence_matches('monthly',1,'{}'::smallint[],31,'2026-01-31','2026-03-30'),
+  public.recurrence_occurrence_matches('monthly',1,'{}'::smallint[],31::smallint,'2026-01-31','2026-03-30'),
   false,'monthly day-31 does not match the 30th of a 31-day month');
 
 -- ---------- 匹配算法：yearly 2/29 规则（闰年与平年压尾） ----------
