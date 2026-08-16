@@ -103,8 +103,10 @@ select extensions.is(
     join public.todos t on t.id = h.todo_id
     where t.recurrence_rule_id='22000000-0000-0000-0000-000000000001' and h.action='postponed'),
   1::bigint,'postponing an occurrence records history');
+-- 延期目标是物化窗口内的日期（today+1 已有非 detached 物化实例），
+-- 唯一索引排除 detached 行后两者共存：断言"存在被移入的 detached 实例"。
 select extensions.ok(
-  (select pg_catalog.bool_and(recurrence_detached) from public.todos
+  (select pg_catalog.bool_or(recurrence_detached) from public.todos
     where recurrence_rule_id='22000000-0000-0000-0000-000000000001'
       and occurrence_date = ((pg_catalog.now() at time zone 'Asia/Shanghai')::date + 1)),
   'postponed instance is marked detached');
