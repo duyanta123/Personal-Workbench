@@ -56,7 +56,7 @@ describe('cursor transport routing', () => {
   })
 
   it('uses PostgREST cursor queries for ordinary tables', async () => {
-    const { result } = renderHook(() => useTodos(), { wrapper })
+    const { result } = renderHook(() => useTodos({ filters: { showDone: true } }), { wrapper })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
     expect(mocks.from).toHaveBeenCalledWith('todos')

@@ -41,6 +41,13 @@ function fallbackCandidate(kind: QuickCaptureKind, source: string, today: string
   }
 }
 
+/** 按候选类型重算缺失的必填字段（用户在表单中修正后用于消除歧义）。 */
+function missingFor(kind: QuickCaptureKind, draft: Record<string, unknown>): string[] {
+  if (kind === 'todo') return String(draft.text ?? '').trim() ? [] : ['text']
+  if (kind === 'ledger') return draft.amount == null || !(Number(draft.amount) > 0) ? ['amount'] : []
+  return String(draft.body ?? '').trim() ? [] : ['body']
+}
+
 export default function QuickCaptureDialog() {
   const open = useUiStore((state) => state.quickCaptureOpen)
   const initialSource = useUiStore((state) => state.quickCaptureSource)
@@ -55,7 +62,7 @@ export default function QuickCaptureDialog() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [noteTags, setNoteTags] = useState('')
-  const operationId = useRef(crypto.randomUUID())
+  const commandId = useRef(crypto.randomUUID())
   const customCategories = preferences.data?.categories
 
   const parsed = useMemo(() => parseQuickCapture(source, { today, categories: customCategories }), [source, today, customCategories])
@@ -70,7 +77,7 @@ export default function QuickCaptureDialog() {
     setCandidate(result.candidates.find((item) => item.kind === kind) ?? fallbackCandidate(kind, initialSource, today))
     const initialCandidate = result.candidates.find((item) => item.kind === kind)
     setNoteTags(initialCandidate?.kind === 'note' ? initialCandidate.draft.tags.join(', ') : '')
-    operationId.current = crypto.randomUUID()
+    commandId.current = crypto.randomUUID()
     setError('')
   }, [open, initialSource, today, customCategories])
 
@@ -94,7 +101,13 @@ export default function QuickCaptureDialog() {
   }
 
   function updateDraft(patch: Record<string, unknown>) {
-    setCandidate((current) => ({ ...current, draft: { ...current.draft, ...patch } } as QuickCaptureCandidate))
+    setCandidate((current) => {
+      const draft = { ...current.draft, ...patch }
+      const missingFields = missingFor(current.kind, draft)
+      // 用户补齐必填字段后，歧义候选升级为可直接创建。
+      const confidence = missingFields.length === 0 && current.confidence === 'ambiguous' ? 'likely' : current.confidence
+      return { ...current, draft, missingFields, confidence } as QuickCaptureCandidate
+    })
     setError('')
   }
 
@@ -104,24 +117,29 @@ export default function QuickCaptureDialog() {
     return validateNoteCreate(candidate.draft)
   }
 
+  const routesToInbox = candidate.confidence === 'ambiguous' || candidate.missingFields.length > 0
   let validationError = ''
-  try {
-    validateCurrent()
-    if (candidate.kind === 'note') parseTags(noteTags)
-  } catch (cause) { validationError = (cause as Error).message }
+  if (!routesToInbox) {
+    try {
+      validateCurrent()
+      if (candidate.kind === 'note') parseTags(noteTags)
+    } catch (cause) { validationError = (cause as Error).message }
+  }
 
   async function submit() {
     if (!userId || !canWrite || validationError || submitting) return
     setSubmitting(true)
     setError('')
     try {
-      const candidateToSubmit = candidate.kind === 'note'
+      const candidateToSubmit = candidate.kind === 'note' && !routesToInbox
         ? { ...candidate, draft: { ...candidate.draft, tags: parseTags(noteTags) } } as QuickCaptureCandidate
         : candidate
-      const result = await submitQuickCapture(userId, candidateToSubmit, operationId.current)
+      const result = await submitQuickCapture(userId, candidateToSubmit, commandId.current, source, parsed.candidates)
       push({
         kind: result.status === 'queued' ? 'info' : 'success',
-        message: result.status === 'queued' ? '网络中断，记录已加入待同步' : `${KIND_META[candidate.kind].label}已保存`
+        message: result.status === 'queued'
+          ? '网络中断，记录已加入待同步'
+          : routesToInbox ? '已保存到收件箱' : `${KIND_META[candidate.kind].label}已保存`
       })
       close()
     } catch (cause) {
@@ -150,7 +168,7 @@ export default function QuickCaptureDialog() {
           <div>
             <label htmlFor="quick-capture-source" className="mb-1.5 block text-xs font-medium text-ink-2">一句话记录</label>
             <Textarea id="quick-capture-source" data-autofocus rows={2} value={source} onChange={(event) => handleSourceChange(event.target.value)} placeholder="例如：中午和同事吃饭 45" maxLength={100000} disabled={!canWrite} />
-            {!canWrite && <p role="alert" className="mt-1.5 text-xs text-m3">当前为离线只读模式，联网并验证会话后才能记录。</p>}
+            {!canWrite && <p role="alert" className="mt-1.5 text-xs text-m3">首次使用需联网登录；已登录设备可离线记录。</p>}
           </div>
 
           {source.trim() && (
@@ -195,10 +213,13 @@ export default function QuickCaptureDialog() {
                 </div>
               )}
 
+              {routesToInbox && !error && <p className="text-xs text-ink-3">信息存在歧义或缺少必填字段，将先保存到收件箱。</p>}
               {(error || validationError) && <p role="alert" className="text-xs text-danger">{error || validationError}</p>}
               <div className="flex justify-end gap-2">
                 <Button variant="secondary" onClick={close}>取消</Button>
-                <Button onClick={() => void submit()} disabled={!canWrite || Boolean(validationError) || submitting}>{submitting ? '保存中…' : `确认保存为${KIND_META[candidate.kind].label}`}</Button>
+                <Button onClick={() => void submit()} disabled={!canWrite || Boolean(validationError) || submitting}>
+                  {submitting ? '保存中…' : routesToInbox ? '保存到收件箱' : `确认保存为${KIND_META[candidate.kind].label}`}
+                </Button>
               </div>
             </>
           )}

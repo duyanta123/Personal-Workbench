@@ -1,12 +1,14 @@
-import { useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { Fragment, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { DragEvent, FormEvent } from 'react'
 import {
+  CalendarClock,
   Check,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   ChevronUp,
   ClipboardList,
+  History,
   Pin,
   PinOff,
   Pencil,
@@ -19,7 +21,9 @@ import {
   useAddTodo,
   useDeleteTodo,
   useMoveTodo,
+  usePostponeTodo,
   useTodoById,
+  useTodoHistory,
   useTodoStats,
   useTodos,
   useToggleTodo,
@@ -28,7 +32,7 @@ import {
   TODOS_PAGE_SIZE,
   todosListKey
 } from '../hooks/useTodos'
-import type { TodoPage } from '../hooks/useTodos'
+import type { TodoListFilters, TodoPage } from '../hooks/useTodos'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
@@ -51,6 +55,9 @@ import QueryError from '../components/ui/QueryError'
 import { useSearchParams } from 'react-router-dom'
 import { useCurrentDate } from '../hooks/useCurrentDate'
 import { useClampPage } from '../hooks/useClampPage'
+import RecurrencePanel from '../components/ui/RecurrencePanel'
+import TodoArtifactsPanel, { type TodoViewState } from '../components/ui/TodoArtifactsPanel'
+import EntityLinksPanel from '../components/ui/EntityLinksPanel'
 
 const LEVEL_META: Record<Priority, { label: string; variant: 'danger' | 'warning' | 'accent' }> = {
   high: { label: '高', variant: 'danger' },
@@ -62,6 +69,49 @@ const LEVEL_OPTIONS = (Object.keys(LEVEL_META) as Priority[]).map((lv) => ({
   value: lv,
   label: `${LEVEL_META[lv].label}优先级`
 }))
+
+const POSTPONE_OPTIONS = [
+  { days: 1, label: '1 天' },
+  { days: 7, label: '1 周' },
+  { days: 30, label: '1 月' }
+] as const
+
+const HISTORY_ACTION_LABELS: Record<string, string> = {
+  done: '完成',
+  skipped: '跳过',
+  reopened: '恢复进行',
+  postponed: '延期'
+}
+
+/** 周期实例的状态历史（内联小面板） */
+function TodoHistoryInline({ todoId, onClose }: { todoId: string; onClose: () => void }) {
+  const history = useTodoHistory(todoId)
+  return (
+    <li className="rounded-2xl border border-border bg-nested px-4 py-3 text-xs text-ink-2">
+      <div className="flex items-center justify-between">
+        <span className="font-semibold text-ink">状态历史</span>
+        <button type="button" onClick={onClose} className="font-medium text-accent">关闭</button>
+      </div>
+      {history.isLoading ? (
+        <div className="mt-2 text-ink-3">加载中…</div>
+      ) : !history.data?.length ? (
+        <div className="mt-2 text-ink-3">暂无记录</div>
+      ) : (
+        <ul className="mt-2 space-y-1">
+          {history.data.map((row) => (
+            <li key={row.id} className="flex items-center gap-2 tabular-nums">
+              <span className="font-medium text-ink">{HISTORY_ACTION_LABELS[row.action] ?? row.action}</span>
+              {row.action === 'postponed' && row.from_value && row.to_value && (
+                <span>{row.from_value} → {row.to_value}</span>
+              )}
+              <span className="ml-auto text-ink-3">{row.created_at.slice(0, 16).replace('T', ' ')}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  )
+}
 
 /** 未完成任务按 逾期 → 今天/无日期 → 未来 分组 */
 function dueMeta(t: Todo, today: string) {
@@ -75,10 +125,13 @@ function dueMeta(t: Todo, today: string) {
 }
 
 export default function Todos() {
+  const today = useCurrentDate()
   const [page, setPage] = useState(0)
   const [query, setQuery] = useState('')
+  const [viewState, setViewState] = useState<TodoViewState>({ showDone: false, sort: { column: 'sort_order', direction: 'asc' } })
   const deferredQuery = useDeferredValue(query.trim())
-  const todosQuery = useTodos({ page, query: deferredQuery })
+  const listFilters: TodoListFilters = { showDone: viewState.showDone, level: viewState.level, due: viewState.due, currentDate: today }
+  const todosQuery = useTodos({ page, query: deferredQuery, filters: listFilters, sort: viewState.sort })
   const todos = todosQuery.data?.items
   useClampPage(todosQuery.data?.total, TODOS_PAGE_SIZE, page, setPage)
   const isLoading = todosQuery.isLoading
@@ -89,6 +142,7 @@ export default function Todos() {
   const updateTodo = useUpdateTodo()
   const moveTodo = useMoveTodo()
   const deleteTodo = useDeleteTodo()
+  const postponeTodo = usePostponeTodo()
   const push = useToastStore((s) => s.push)
   const touch = useTouch()
   const { userId } = useAuth()
@@ -97,16 +151,19 @@ export default function Todos() {
   const [level, setLevel] = useState<Priority>('mid')
   const [due, setDue] = useState<string>('')
   const [dragId, setDragId] = useState<string | null>(null)
-  const [showDone, setShowDone] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingOriginal, setEditingOriginal] = useState<Todo | null>(null)
+  const [postponeId, setPostponeId] = useState<string | null>(null)
+  const [historyId, setHistoryId] = useState<string | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const focusId = searchParams.get('focus')
   const focusQuery = useTodoById(focusId)
 
-  const today = useCurrentDate()
   const doneCount = statsQuery.data?.done ?? 0
   const totalCount = statsQuery.data?.total ?? 0
   const pct = totalCount ? (doneCount / totalCount) * 100 : 0
+  const showDone = viewState.showDone
+  const manualOrder = viewState.sort.column === 'sort_order' && viewState.sort.direction === 'asc'
 
   const normalizedQuery = query.trim().toLowerCase()
   const searching = normalizedQuery.length > 0
@@ -121,7 +178,7 @@ export default function Todos() {
   // 侧栏统计
   const byLevel = statsQuery.data?.byLevel ?? { high: 0, mid: 0, low: 0 }
 
-  useEffect(() => setPage(0), [query])
+  useEffect(() => setPage(0), [query, viewState.showDone, viewState.level, viewState.due, viewState.sort])
   useEffect(() => {
     if (!focusId || focusQuery.isLoading || focusQuery.data !== null) return
     const next = new URLSearchParams(searchParams)
@@ -131,7 +188,7 @@ export default function Todos() {
   }, [focusId, focusQuery.isLoading, focusQuery.data, push, searchParams, setSearchParams])
 
   const { requestDelete, isPending: isDeletePending, remainingSeconds } = useDeferredDelete<Todo, TodoPage>({
-    key: todosListKey(userId, page, deferredQuery),
+    key: todosListKey(userId, page, deferredQuery, listFilters, viewState.sort),
     label: (t) => t.text,
     remove: (id) => deleteTodo.mutateAsync(id),
     cache: {
@@ -198,8 +255,16 @@ export default function Todos() {
     if (!t) return
     try {
       if (editingId) {
-        await updateTodo.mutateAsync({ id: editingId, patch: { text: t, level, due_date: due || null } })
-        push({ kind: 'success', message: '待办已更新' })
+        // 最小 diff patch：只提交实际变化的字段，避免把其他设备已变更的
+        // 字段以过时的 expected 值重发，造成多设备"假冲突"。
+        const patch: Partial<Pick<Todo, 'text' | 'level' | 'due_date'>> = {}
+        if (t !== editingOriginal?.text) patch.text = t
+        if (level !== editingOriginal?.level) patch.level = level
+        if ((due || null) !== (editingOriginal?.due_date ?? null)) patch.due_date = due || null
+        if (Object.keys(patch).length > 0) {
+          await updateTodo.mutateAsync({ id: editingId, patch })
+          push({ kind: 'success', message: '待办已更新' })
+        }
       } else {
         await addTodo.mutateAsync({ text: t, level, due_date: due || null })
         push({ kind: 'success', message: '待办已添加' })
@@ -207,6 +272,7 @@ export default function Todos() {
       setText('')
       setDue('')
       setEditingId(null)
+      setEditingOriginal(null)
     } catch {
       push({ kind: 'error', message: editingId ? '待办更新失败，请重试' : '待办添加失败，请重试' })
     }
@@ -214,6 +280,7 @@ export default function Todos() {
 
   function startEdit(todo: Todo) {
     setEditingId(todo.id)
+    setEditingOriginal(todo)
     setText(todo.text)
     setLevel(todo.level)
     setDue(todo.due_date ?? '')
@@ -244,18 +311,26 @@ export default function Todos() {
         }
       />
       {todosQuery.isError && <QueryError onRetry={() => todosQuery.refetch()} />}
+      <RecurrencePanel entityType="todo" />
+      <TodoArtifactsPanel
+        draft={{ text, level, due }} query={query} state={viewState} onChange={setViewState}
+        onApplyView={(view) => { setQuery(view.query); setViewState(view.state) }}
+      />
 
       {focusQuery.data && (
-        <div className="rounded-2xl border border-accent bg-accent-2/40 p-4 shadow-card">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">搜索定位</div>
-          <div className="mt-1 text-sm font-semibold text-ink">{focusQuery.data.text}</div>
-          <button
-            type="button"
-            onClick={() => { const next = new URLSearchParams(searchParams); next.delete('focus'); setSearchParams(next, { replace: true }) }}
-            className="mt-2 text-xs font-medium text-accent"
-          >
-            关闭定位
-          </button>
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-accent bg-accent-2/40 p-4 shadow-card">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">搜索定位</div>
+            <div className="mt-1 text-sm font-semibold text-ink">{focusQuery.data.text}</div>
+            <button
+              type="button"
+              onClick={() => { const next = new URLSearchParams(searchParams); next.delete('focus'); setSearchParams(next, { replace: true }) }}
+              className="mt-2 text-xs font-medium text-accent"
+            >
+              关闭定位
+            </button>
+          </div>
+          <EntityLinksPanel sourceKind="todo" sourceId={focusQuery.data.id} />
         </div>
       )}
 
@@ -321,7 +396,7 @@ export default function Todos() {
                 <Plus size={16} />
                 {editingId ? '保存' : '添加'}
               </Button>
-              {editingId && <IconButton type="button" onClick={() => { setEditingId(null); setText(''); setDue('') }} aria-label="取消编辑"><X size={16} /></IconButton>}
+              {editingId && <IconButton type="button" onClick={() => { setEditingId(null); setEditingOriginal(null); setText(''); setDue('') }} aria-label="取消编辑"><X size={16} /></IconButton>}
               </div>
             </div>
           </form>
@@ -347,10 +422,11 @@ export default function Todos() {
                 <ul className="space-y-2">
                   {notDone.map((t) => {
                     const due = dueMeta(t, today)
+                    const isRecurrence = Boolean(t.recurrence_rule_id && t.occurrence_date)
                     return (
+                      <Fragment key={t.id}>
                       <li
-                        key={t.id}
-                        draggable={!searching && !isDeletePending(t.id)}
+                        draggable={manualOrder && !searching && !isDeletePending(t.id)}
                         onDragStart={(e: DragEvent) => {
                           setDragId(t.id)
                           e.dataTransfer.effectAllowed = 'move'
@@ -389,7 +465,7 @@ export default function Todos() {
                         )}
                         <Badge variant={LEVEL_META[t.level].variant}>{LEVEL_META[t.level].label}</Badge>
                         <div className="flex items-center gap-0.5">
-                          {touch && !searching && (
+                          {touch && manualOrder && !searching && (
                             <>
                               <IconButton size="sm" aria-label="上移" onClick={() => move(t.id, -1)}>
                                 <ChevronUp size={15} />
@@ -398,6 +474,17 @@ export default function Todos() {
                                 <ChevronDown size={15} />
                               </IconButton>
                             </>
+                          )}
+                          {isRecurrence && (
+                            <IconButton
+                              size="sm"
+                              onClick={() => { setPostponeId(postponeId === t.id ? null : t.id); setHistoryId(null) }}
+                              disabled={postponeTodo.isPending || isDeletePending(t.id)}
+                              aria-label="延期"
+                              className={cn('text-ink-3', !touch && 'opacity-0 transition-opacity duration-150 group-hover:opacity-100', postponeId === t.id && 'text-accent opacity-100')}
+                            >
+                              <CalendarClock size={15} />
+                            </IconButton>
                           )}
                           <IconButton
                             size="sm"
@@ -420,6 +507,17 @@ export default function Todos() {
                           >
                             {t.pinned ? <Pin size={15} /> : <PinOff size={15} />}
                           </IconButton>
+                          {isRecurrence && (
+                            <IconButton
+                              size="sm"
+                              onClick={() => { setHistoryId(historyId === t.id ? null : t.id); setPostponeId(null) }}
+                              disabled={isDeletePending(t.id)}
+                              aria-label="状态历史"
+                              className={cn('text-ink-3', !touch && 'opacity-0 transition-opacity duration-150 group-hover:opacity-100', historyId === t.id && 'text-accent opacity-100')}
+                            >
+                              <History size={15} />
+                            </IconButton>
+                          )}
                           <IconButton
                             size="sm"
                             onClick={() => requestDelete(t)}
@@ -431,20 +529,45 @@ export default function Todos() {
                           </IconButton>
                         </div>
                       </li>
+                      {postponeId === t.id && (
+                        <li className="flex items-center gap-2 rounded-2xl border border-border bg-nested px-4 py-3 text-xs text-ink-2">
+                          <span className="font-semibold text-ink">顺延</span>
+                          {POSTPONE_OPTIONS.map((option) => (
+                            <button
+                              key={option.days}
+                              type="button"
+                              disabled={postponeTodo.isPending}
+                              onClick={() => {
+                                void postponeTodo.mutateAsync({ id: t.id, days: option.days })
+                                  .then(() => {
+                                    setPostponeId(null)
+                                    push({ kind: 'success', message: `已顺延 ${option.label}，可在状态历史中查看` })
+                                  })
+                                  .catch(() => push({ kind: 'error', message: '延期保存失败，请重试' }))
+                              }}
+                              className="rounded-full bg-surface px-2.5 py-1 font-medium text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </li>
+                      )}
+                      {historyId === t.id && <TodoHistoryInline todoId={t.id} onClose={() => setHistoryId(null)} />}
+                      </Fragment>
                     )
                   })}
                 </ul>
               )}
 
               {/* 已完成（可折叠） */}
-              {doneList.length > 0 && (
+              {doneCount > 0 && (
                 <div className="rounded-2xl border border-border bg-surface">
                   <button
-                    onClick={() => setShowDone((s) => !s)}
+                    onClick={() => setViewState((current) => ({ ...current, showDone: !current.showDone }))}
                     className="flex w-full items-center justify-between px-4 py-3 text-xs font-medium text-ink-2 transition-colors hover:text-ink"
                   >
                     <span>
-                      已完成 <span className="tabular-nums">{doneList.length}</span>
+                      已完成 <span className="tabular-nums">{showDone ? doneList.length : doneCount}</span>
                     </span>
                     <ChevronDown
                       size={16}

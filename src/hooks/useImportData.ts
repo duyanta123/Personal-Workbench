@@ -5,7 +5,7 @@ import {
   BACKUP_TABLES,
   base64ToBlob,
   MAX_AVATAR_BYTES,
-  type BackupV3
+  type BackupV7
 } from '../utils/backup'
 import { compressImage } from '../utils/avatar'
 import { cancelAllPendingDeletes } from './useDeferredDelete'
@@ -17,6 +17,7 @@ import {
   refreshSyncState
 } from '../lib/outbox'
 import { clearUserLocalData } from '../lib/localData'
+import { discardCommand, flushCommands, listCommands } from '../lib/commands'
 import type { Json } from '../lib/database.types'
 import { rpcArray, rpcRecord } from '../lib/rpcSchemas'
 
@@ -55,17 +56,21 @@ export function useImportData() {
   const qc = useQueryClient()
   const { userId } = useAuth()
   return useMutation({
-    mutationFn: async (payload: BackupV3) => {
+    mutationFn: async (payload: BackupV7) => {
       if (!userId) throw new Error('未登录')
       if (!navigator.onLine) throw new Error('恢复数据需要联网')
       cancelAllPendingDeletes()
 
-      let pending = await pendingOperationCount(userId)
+      let pending = (await pendingOperationCount(userId))
+        + (await listCommands(userId)).filter((command) => command.status !== 'resolved').length
       if (pending > 0) {
         try {
-          pending = (await flushOutbox(userId)).pending
+          const [legacyResult] = await Promise.all([flushOutbox(userId), flushCommands(userId)])
+          pending = legacyResult.pending
+            + (await listCommands(userId)).filter((command) => command.status !== 'resolved').length
         } catch {
-          pending = await pendingOperationCount(userId)
+          pending = (await pendingOperationCount(userId))
+            + (await listCommands(userId)).filter((command) => command.status !== 'resolved').length
         }
       }
       if (pending > 0) {
@@ -74,11 +79,15 @@ export function useImportData() {
         )
         if (!discard) throw new Error('已取消恢复：请先同步本机操作')
         await discardPendingOperations(userId)
+        const remaining = await listCommands(userId)
+        await Promise.all(remaining
+          .filter((command) => command.status !== 'resolved')
+          .map((command) => discardCommand(userId, command.commandId)))
       }
 
       const sync = await refreshSyncState(userId)
       const manifest = Object.fromEntries(BACKUP_TABLES.map((table) => [table, payload.tables[table].length]))
-      const sourceVersion = payload.metadata.source_version ?? 3
+      const sourceVersion = payload.metadata.source_version ?? 7
       const begin = await supabase!.rpc('begin_restore', {
         p_expected_revision: sync.revision,
         p_source_version: sourceVersion,

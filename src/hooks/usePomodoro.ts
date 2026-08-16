@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { enqueueOperation } from '../lib/outbox'
+import { enqueueCommand } from '../lib/commands'
 import { useAuth } from './useAuth'
 import { useCurrentDate } from './useCurrentDate'
 
@@ -38,10 +38,11 @@ export function useCompletePomodoro() {
   return useMutation({
     mutationFn: async (input: { date: string; minutes: number; operationId: string }) => {
       if (!userId) throw new Error('未登录')
-      return enqueueOperation(userId, 'pomodoro.complete', {
-        date: input.date,
-        minutes: input.minutes
-      }, input.operationId)
+      return enqueueCommand(userId, {
+        kind: 'pomodoro.create',
+        commandId: input.operationId,
+        payload: { date: input.date, count: 1, minutes: input.minutes }
+      })
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: pomodoroKey(userId) })
   })

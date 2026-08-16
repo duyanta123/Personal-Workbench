@@ -66,6 +66,9 @@ export interface FlushResult {
 
 const localFlushes = new Map<string, Promise<FlushResult>>()
 
+/** V1 上限与 V2 对齐；该协议已停止新增调用方（见 ADR 0004）。 */
+const MAX_PENDING_OPERATIONS = 1000
+
 function isNetworkError(error: unknown) {
   const message = error instanceof Error ? error.message : String((error as { message?: unknown })?.message ?? error)
   return /fetch|abort|network|timeout|offline|failed to fetch/i.test(message)
@@ -145,12 +148,20 @@ function isPendingOperation(value: unknown): value is PendingOperation {
     && typeof entry.attempts === 'number'
 }
 
+/**
+ * @deprecated V1 写入协议已退役：新代码一律使用 commands.ts 的 enqueueCommand（V2）。
+ * 本函数保留是为了让旧版本客户端遗留的 pending 操作继续可被 flushOutbox 消化。
+ */
 export async function enqueueOperation<T = unknown, Kind extends WorkbenchOperationKind = WorkbenchOperationKind>(
   userId: string,
   kind: Kind,
   payload: WorkbenchOperationPayloads[Kind],
   operationId: string = crypto.randomUUID()
 ): Promise<OperationResult<T>> {
+  const pendingCount = await pendingOperationCount(userId)
+  if (pendingCount >= MAX_PENDING_OPERATIONS) {
+    throw new Error(`待同步操作不能超过 ${MAX_PENDING_OPERATIONS} 条`)
+  }
   const sync = await requireSyncState(userId)
   const entry = {
     version: 1,
@@ -173,7 +184,10 @@ export async function enqueueOperation<T = unknown, Kind extends WorkbenchOperat
     return { status: 'applied', operationId, data: data as T }
   } catch (error) {
     if (!isNetworkError(error)) {
-      await deleteLocalValue(userId, operationKey(operationId))
+      // 非网络错误保留记录供排查，不再静默删除。
+      entry.attempts++
+      entry.lastError = error instanceof Error ? error.message : String(error)
+      await setLocalValue(userId, operationKey(operationId), entry)
       throw error
     }
     entry.attempts++
@@ -216,7 +230,10 @@ async function flushUnlocked(userId: string): Promise<FlushResult> {
           stale++
           continue
         }
-        await deleteLocalValue(userId, key)
+        // 非网络错误保留记录供排查（workbench:outbox-error 提示用户），不再静默删除。
+        entry.attempts++
+        entry.lastError = message
+        await setLocalValue(userId, key, entry)
         window.dispatchEvent(new CustomEvent('workbench:outbox-error', { detail: message }))
         continue
       }

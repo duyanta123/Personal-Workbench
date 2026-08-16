@@ -31,17 +31,18 @@ describe('QuickCaptureDialog', () => {
     act(() => useUiStore.getState().openQuickCapture(source))
   }
 
-  it('展示歧义候选并允许修正缺失金额', () => {
+  it('歧义候选可以直接保存到收件箱，也可修正后直达创建', () => {
     render(<QuickCaptureDialog />)
     open('午饭 45 打车 20')
     expect(screen.getByRole('tab', { name: '记账' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('alert')).toHaveTextContent('金额必须大于 0')
+    expect(screen.getByRole('button', { name: '保存到收件箱' })).toBeEnabled()
+    expect(screen.queryByRole('alert')).toBeNull()
     fireEvent.change(screen.getByLabelText('金额'), { target: { value: '65' } })
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getByRole('button', { name: '确认保存为记账' })).toBeEnabled()
   })
 
-  it('失败重试复用同一个 operationId', async () => {
+  it('失败重试复用同一个 commandId', async () => {
     mocks.submit.mockRejectedValueOnce(new Error('暂时失败')).mockResolvedValueOnce({ status: 'applied', operationId: 'op', data: null })
     render(<QuickCaptureDialog />)
     open('中午吃饭 45')
@@ -61,12 +62,12 @@ describe('QuickCaptureDialog', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('离线只读时禁用输入和提交', () => {
+  it('无本地身份时禁用输入和提交', () => {
     mocks.canWrite = false
     useUiStore.setState({ quickCaptureOpen: true, quickCaptureSource: '待办：交周报' })
     render(<QuickCaptureDialog />)
     expect(screen.getByLabelText('一句话记录')).toBeDisabled()
-    expect(screen.getByRole('alert')).toHaveTextContent('离线只读')
+    expect(screen.getByRole('alert')).toHaveTextContent('首次使用需联网登录')
     expect(screen.getByRole('button', { name: '确认保存为待办' })).toBeDisabled()
   })
 

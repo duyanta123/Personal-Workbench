@@ -2,11 +2,13 @@ import { describe, expect, test } from 'vitest'
 import { collectPages, MAX_AVATAR_BYTES, MAX_BACKUP_TABLE_ROWS, normalizeBackup } from './backup'
 
 describe('backup', () => {
-  test('旧版顶层数组升级为 BackupV3 并补齐缺失表', () => {
+  test('旧版顶层数组升级为 BackupV7 并补齐缺失表和安全默认值', () => {
     const backup = normalizeBackup({ todos: [{ id: 't1', text: 'task' }], notes: [] })
-    expect(backup.metadata.version).toBe(3)
+    expect(backup.metadata.version).toBe(7)
     expect(backup.metadata.source_version).toBe(1)
     expect(backup.tables.todos).toHaveLength(1)
+    expect(backup.tables.todos[0]).toMatchObject({ done: false, status: 'open' })
+    expect(backup.tables.inbox_items).toEqual([])
     expect(backup.tables.user_preferences).toEqual([])
     expect(backup.avatars).toEqual([])
   })
@@ -33,7 +35,7 @@ describe('backup', () => {
   })
 
   test('拒绝未知版本、重复 ID 和无效头像数据', () => {
-    expect(() => normalizeBackup({ metadata: { version: 4 }, tables: {} })).toThrow('版本')
+    expect(() => normalizeBackup({ metadata: { version: 8 }, tables: {} })).toThrow('版本')
     expect(() => normalizeBackup({ todos: [{ id: 'same', text: 'A' }, { id: 'same', text: 'B' }] })).toThrow('重复 ID')
     expect(() => normalizeBackup({ metadata: { version: 2 }, tables: {}, avatars: [{ mime_type: 'image/png', data_base64: 'bad' }] })).toThrow('头像')
   })
@@ -86,5 +88,88 @@ describe('backup', () => {
       }]
     })).toThrow('practice_problems')
     expect(() => normalizeBackup({ body_metrics: [{ id: 'm1', date: '2026-08-10', body_fat: 101 }] })).toThrow('body_metrics')
+  })
+
+  test('旧账目升级为整数金额并归入默认账户', () => {
+    const backup = normalizeBackup({
+      ledger_entries: [{ id: 'l1', kind: 'expense', category: '餐饮', amount: 12.34, entry_date: '2026-08-13' }]
+    })
+    expect(backup.tables.ledger_entries[0]).toMatchObject({ amount_minor: 1234, currency_code: 'CNY', status: 'posted' })
+    expect(backup.tables.ledger_accounts).toHaveLength(1)
+    expect(backup.tables.ledger_entries[0].account_id).toBe(backup.tables.ledger_accounts[0].id)
+  })
+
+  test('V7 保留跨实体引用并拒绝孤立链接', () => {
+    const valid = normalizeBackup({
+      metadata: { version: 7, source_revision: 4 }, tables: {
+        todos: [{ id: '00000000-0000-4000-8000-000000000001', text: '关联任务' }],
+        notes: [{ id: '00000000-0000-4000-8000-000000000002', body: '说明', tags: [] }],
+        entity_links: [{
+          id: '00000000-0000-4000-8000-000000000003', source_kind: 'todo',
+          source_id: '00000000-0000-4000-8000-000000000001', target_kind: 'note',
+          target_id: '00000000-0000-4000-8000-000000000002'
+        }]
+      }, avatars: []
+    })
+    expect(valid.tables.entity_links).toHaveLength(1)
+    expect(() => normalizeBackup({ metadata: { version: 7 }, tables: {
+      entity_links: [{ id: 'x', source_kind: 'todo', source_id: 'missing', target_kind: 'note', target_id: 'missing' }]
+    } })).toThrow('关联')
+  })
+
+  test('V1–V6 版本矩阵：全部可导入并按版本补默认值', () => {
+    // V1：裸顶层数组。
+    const v1 = normalizeBackup({
+      todos: [{ id: 't1', text: 'v1 task', done: true }],
+      habits: [{ id: 'h1', name: '阅读' }]
+    })
+    expect(v1.metadata.source_version).toBe(1)
+    expect(v1.tables.todos[0]).toMatchObject({ status: 'done' })
+    expect(v1.tables.habits[0]).toMatchObject({ tracking_type: 'boolean', period_days: 1, target_count: 1 })
+    expect(v1.tables.habit_logs).toEqual([])
+    expect(v1.tables.inbox_items).toEqual([])
+    expect(v1.tables.recurrence_rules).toEqual([])
+
+    // V3：tables 包裹结构，无 inbox / 周期规则 / 新记账实体。
+    const v3 = normalizeBackup({
+      metadata: { version: 3, exported_at: '2026-08-12T00:00:00.000Z' },
+      tables: { todos: [{ id: 't3', text: 'v3 task' }], notes: [{ id: 'n3', body: 'v3 note', tags: [] }] },
+      avatars: []
+    })
+    expect(v3.metadata.source_version).toBe(3)
+    expect(v3.tables.inbox_items).toEqual([])
+    expect(v3.tables.ledger_accounts).toEqual([])
+
+    // V5：有周期规则与习惯新字段，但无新记账实体与状态历史。
+    const v5 = normalizeBackup({
+      metadata: { version: 5, exported_at: '2026-08-13T00:00:00.000Z' },
+      tables: {
+        recurrence_rules: [{
+          id: 'r5', entity_type: 'todo', frequency: 'weekly', interval_count: 1,
+          weekdays: [1], start_date: '2026-08-10', timezone: 'Asia/Shanghai',
+          generation_mode: 'manual', template: { text: '周会' }
+        }],
+        habits: [{ id: 'h5', name: '跑步', tracking_type: 'numeric', period_days: 7, target_count: 1, target_value: 10, target_mode: 'at_least' }]
+      },
+      avatars: []
+    })
+    expect(v5.metadata.source_version).toBe(5)
+    expect(v5.tables.recurrence_rules).toHaveLength(1)
+    expect(v5.tables.ledger_rules).toEqual([])
+    expect(v5.tables.todo_status_history).toEqual([])
+
+    // V6：有新记账实体，但无链接/模板/保存视图/状态历史。
+    const v6 = normalizeBackup({
+      metadata: { version: 6, exported_at: '2026-08-14T00:00:00.000Z' },
+      tables: {
+        ledger_entries: [{ id: 'l6', kind: 'expense', category: '餐饮', amount: 25, amount_minor: 2500, currency_code: 'CNY', status: 'posted', entry_date: '2026-08-14', account_id: 'a6' }],
+        ledger_accounts: [{ id: 'a6', name: '现金', type: 'cash', opening_balance_minor: 0, archived: false }]
+      },
+      avatars: []
+    })
+    expect(v6.metadata.source_version).toBe(6)
+    expect(v6.tables.entity_links).toEqual([])
+    expect(v6.tables.todo_status_history).toEqual([])
+    expect(v6.tables.ledger_entries[0].account_id).toBe('a6')
   })
 })

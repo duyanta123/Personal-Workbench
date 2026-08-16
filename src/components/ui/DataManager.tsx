@@ -3,7 +3,7 @@ import { Database, Download, Upload, X } from 'lucide-react'
 import { useImportData } from '../../hooks/useImportData'
 import { useToastStore } from '../../stores/toast'
 import { buildICalendar, buildJSON, downloadFile } from '../../utils/export'
-import { backupCounts, createBackupV3, fetchAllTableRows, MAX_BACKUP_BYTES, normalizeBackup } from '../../utils/backup'
+import { backupCounts, createBackupV7, fetchAllTableRows, MAX_BACKUP_BYTES, normalizeBackup } from '../../utils/backup'
 import type { Habit, Todo, WorkoutSession } from '../../types'
 import { buildStructuredCSV, STRUCTURED_EXPORT_OPTIONS } from '../../utils/structuredExport'
 import type { StructuredExportKind } from '../../utils/structuredExport'
@@ -28,7 +28,7 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
   async function exportJSON() {
     setExporting(true)
     try {
-      const payload = await createBackupV3()
+      const payload = await createBackupV7()
       downloadFile(`工作台备份-${stamp()}.json`, buildJSON(payload), 'application/json')
       push({ kind: 'success', message: '完整 JSON 备份已下载' })
     } catch (error) {
@@ -136,7 +136,7 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
                   {exporting ? '导出中…' : '下载所选文件'}
                 </Button>
               </div>
-              <p className="mt-2 text-[11px] text-ink-3">CSV/ICS 仅用于数据互通，不支持恢复；完整恢复请使用 JSON Backup V3。</p>
+              <p className="mt-2 text-[11px] text-ink-3">CSV/ICS 仅用于数据互通，不支持恢复；完整恢复请使用 JSON Backup V7。</p>
             </div>
 
             <div className="border-t border-border pt-3">

@@ -99,5 +99,9 @@ export const localKeys = {
   queryCache: 'query-cache:v1',
   syncState: 'sync-state:v1',
   outboxPrefix: 'outbox:v1:',
+  commandPrefix: 'command:v2:',
+  syncHistoryPrefix: 'sync-history:v2:',
+  syncMetadata: 'sync-metadata:v2',
+  notificationReceiptPrefix: 'notification:v1:',
   avatar: (path: string) => `avatar:v1:${path}`
 }

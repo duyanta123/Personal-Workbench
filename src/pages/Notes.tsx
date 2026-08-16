@@ -31,8 +31,10 @@ import { cn } from '../lib/cn'
 import QueryError from '../components/ui/QueryError'
 import { useSearchParams } from 'react-router-dom'
 import { useCurrentDate } from '../hooks/useCurrentDate'
-import { LIMITS, parseTags, requireLength, safeExternalUrl, safeExternalUrlOrNull } from '../utils/validation'
+import { LIMITS, parseTags, renderTag, requireLength, safeExternalUrl, safeExternalUrlOrNull } from '../utils/validation'
 import { useClampPage } from '../hooks/useClampPage'
+import MarkdownPreview from '../components/ui/MarkdownPreview'
+import EntityLinksPanel from '../components/ui/EntityLinksPanel'
 
 const LAYOUT_OPTIONS = [
   { value: 'default' as const, label: '标准' },
@@ -60,6 +62,68 @@ function NoteImage({ src }: { src: string }) {
   )
 }
 
+/** 标签输入框：基于已有标签提供 # 前缀补全（键盘 ↑↓ 选择、Enter/点击确认）。 */
+function TagInput({ value, onChange, allTags }: { value: string; onChange: (value: string) => void; allTags: string[] }) {
+  const [highlight, setHighlight] = useState(0)
+
+  const activeToken = (() => {
+    const token = value.split(/[,，\s]+/).at(-1) ?? ''
+    return token.replace(/^#/, '')
+  })()
+  const existing = new Set(parseTags(value))
+  const suggestions = activeToken
+    ? allTags.filter((tag) => tag.startsWith(activeToken) && !existing.has(tag)).slice(0, 8)
+    : []
+
+  function pick(tag: string) {
+    const head = value.split(/[,，\s]+/).slice(0, -1).filter(Boolean)
+    const next = [...head, tag].join(', ')
+    onChange(next)
+    setHighlight(0)
+  }
+
+  return (
+    <div className="relative min-w-48 flex-1">
+      <Input
+        value={value}
+        onChange={(event) => { onChange(event.target.value); setHighlight(0) }}
+        onKeyDown={(event) => {
+          if (!suggestions.length) return
+          if (event.key === 'ArrowDown') { event.preventDefault(); setHighlight((current) => (current + 1) % suggestions.length) }
+          else if (event.key === 'ArrowUp') { event.preventDefault(); setHighlight((current) => (current - 1 + suggestions.length) % suggestions.length) }
+          else if (event.key === 'Enter') { event.preventDefault(); pick(suggestions[highlight] ?? suggestions[0]) }
+        }}
+        placeholder="标签，用逗号分隔（可选），输入 # 或文字获得补全"
+        maxLength={LIMITS.tags * (LIMITS.tag + 1)}
+        aria-label="标签"
+      />
+      {suggestions.length > 0 && (
+        <ul
+          role="listbox"
+          aria-label="标签补全"
+          className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-lg border border-border bg-surface shadow-overlay"
+        >
+          {suggestions.map((tag, index) => (
+            <li key={tag} role="option" aria-selected={index === highlight}>
+              <button
+                type="button"
+                onMouseEnter={() => setHighlight(index)}
+                onMouseDown={(event) => { event.preventDefault(); pick(tag) }}
+                className={cn(
+                  'block w-full px-3 py-1.5 text-left text-xs',
+                  index === highlight ? 'bg-hover text-ink' : 'text-ink-2'
+                )}
+              >
+                {renderTag(tag)}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export default function Notes() {
   const today = useCurrentDate()
   const [page, setPage] = useState(0)
@@ -80,6 +144,7 @@ export default function Notes() {
   const { userId } = useAuth()
 
   const [form, setForm] = useState(EMPTY)
+  const [preview, setPreview] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const focusId = searchParams.get('focus')
@@ -192,10 +257,10 @@ export default function Notes() {
         >
           <div className="flex items-center justify-end gap-2">{isDeletePending(n.id) && <Badge variant="danger">待删除 {remainingSeconds(n.id)}s</Badge>}{renderActions(n)}</div>
           <p className="pt-1 text-center text-base font-medium leading-relaxed text-ink">
-            {n.body}
+            <MarkdownPreview source={n.body} className="text-center" />
           </p>
           <div className="mt-3 text-center text-xs text-ink-3">
-            {n.tags.length > 0 && n.tags.map((t) => `#${t}`).join(' ')}
+            {n.tags.length > 0 && n.tags.map((t) => `${renderTag(t)}`).join(' ')}
             {n.tags.length > 0 && ' · '}
             {n.updated_at.slice(0, 10)}
           </div>
@@ -226,12 +291,12 @@ export default function Notes() {
                 </span>
               )}
             </div>
-            <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-ink-2">{n.body}</p>
+            <div className="mt-1 line-clamp-4 text-sm leading-relaxed text-ink-2"><MarkdownPreview source={n.body} /></div>
             {n.tags.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {n.tags.map((t) => (
                   <Badge key={t} variant="neutral">
-                    #{t}
+                    {renderTag(t)}
                   </Badge>
                 ))}
               </div>
@@ -257,12 +322,12 @@ export default function Notes() {
                 </span>
               )}
             </div>
-            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink-2">{n.body}</p>
+            <div className="mt-1 text-sm leading-relaxed text-ink-2"><MarkdownPreview source={n.body} /></div>
             {n.tags.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {n.tags.map((t) => (
                   <Badge key={t} variant="neutral">
-                    #{t}
+                    {renderTag(t)}
                   </Badge>
                 ))}
               </div>
@@ -298,6 +363,8 @@ export default function Notes() {
         </div>
       )}
 
+      {(editingId || focusQuery.data?.id) && <EntityLinksPanel sourceKind="note" sourceId={editingId ?? focusQuery.data!.id} />}
+
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-4">
           {/* 编辑/新建表单 */}
@@ -308,14 +375,19 @@ export default function Notes() {
               placeholder="标题（可选）"
               maxLength={LIMITS.title}
             />
-            <Textarea
-              value={form.body}
-              onChange={(e) => setForm({ ...form, body: e.target.value })}
-              placeholder="写点什么：灵感、摘录、收藏的链接…"
-              rows={4}
-              noResize
-              maxLength={LIMITS.body}
-            />
+            {preview ? (
+              <div className="min-h-32 rounded-lg border border-border bg-page p-3"><MarkdownPreview source={form.body || '暂无内容'} /></div>
+            ) : (
+              <Textarea
+                value={form.body}
+                onChange={(e) => setForm({ ...form, body: e.target.value })}
+                placeholder="写点什么：支持 Markdown、层级标签和安全链接…"
+                rows={4}
+                noResize
+                maxLength={LIMITS.body}
+              />
+            )}
+            <div className="flex justify-end"><Button type="button" size="sm" variant="ghost" onClick={() => setPreview((value) => !value)}>{preview ? '编辑 Markdown' : '预览 Markdown'}</Button></div>
             <div className="flex flex-wrap items-center gap-2">
               <Segmented
                 value={form.layout}
@@ -333,13 +405,7 @@ export default function Notes() {
               )}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <Input
-                value={form.tags}
-                onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                placeholder="标签，用逗号分隔（可选）"
-                maxLength={LIMITS.tags * (LIMITS.tag + 1)}
-                className="min-w-48 flex-1"
-              />
+              <TagInput value={form.tags} onChange={(tags) => setForm({ ...form, tags })} allTags={allTags} />
               <div className="flex gap-2">
                 {editingId && (
                   <Button type="button" variant="ghost" onClick={reset}>
@@ -390,7 +456,7 @@ export default function Notes() {
                         : 'bg-surface text-ink-2 hover:bg-hover hover:text-ink'
                     )}
                   >
-                    #{t}
+                    {renderTag(t)}
                   </button>
                 ))}
               </div>
@@ -440,7 +506,7 @@ export default function Notes() {
                   const max = tagCounts[0][1]
                   return (
                     <li key={t} className="flex items-center gap-2 text-xs">
-                      <span className="w-12 shrink-0 truncate text-ink-2">#{t}</span>
+                      <span className="w-12 shrink-0 truncate text-ink-2">{renderTag(t)}</span>
                       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-nested">
                         <div className="h-full rounded-full bg-m5" style={{ width: `${(c / max) * 100}%` }} />
                       </div>

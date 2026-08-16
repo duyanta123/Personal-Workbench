@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { enqueueOperation } from '../lib/outbox'
+import { createEntity, deleteEntity, updateEntity } from '../lib/domainCommands'
 import { todayStr } from '../utils/date'
 import { resolveSolvedAt } from '../utils/practiceSolved'
 import type { PracticeDifficulty, PracticeProblem, PracticeStatus } from '../types'
@@ -138,7 +138,7 @@ export function useAddProblem() {
         input.solved_at !== undefined
           ? input.solved_at
           : resolveSolvedAt(null, input.status, todayStr())
-      return enqueueOperation<PracticeProblem>(userId, 'practice.create', { ...input, solved_at })
+      return createEntity(qc, userId, 'practice', { ...input, solved_at })
     },
     onSuccess: () => linkedProblemKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -168,13 +168,15 @@ export function useUpdateProblem() {
           .flatMap(([, page]) => page?.items ?? [])
           .find((problem) => problem.id === id)
         if (!prev) {
-          const { data, error } = await supabase!
-            .from('practice_problems')
-            .select('id,status,solved_at')
-            .eq('id', id)
-            .maybeSingle()
-          if (error) throw error
-          prev = data ? data as PracticeProblem : undefined
+          if (navigator.onLine) {
+            const { data, error } = await supabase!
+              .from('practice_problems')
+              .select('*')
+              .eq('id', id)
+              .maybeSingle()
+            if (error) throw error
+            prev = data ? data as PracticeProblem : undefined
+          }
         }
         if (!prev) throw new Error('题目不存在')
         if (prev.status !== patch.status) {
@@ -182,8 +184,8 @@ export function useUpdateProblem() {
         }
       }
       const payload = solved_at === undefined ? patch : { ...patch, solved_at }
-      const { error } = await supabase!.from('practice_problems').update(payload).eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return updateEntity(qc, userId, 'practice', id, payload)
     },
     onSuccess: () => linkedProblemKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -194,8 +196,8 @@ export function useDeleteProblem() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase!.from('practice_problems').delete().eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return deleteEntity(qc, userId, 'practice', id)
     },
     onSuccess: () => linkedProblemKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })

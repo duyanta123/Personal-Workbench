@@ -2,12 +2,13 @@ import type { NoteCreateDraft, LedgerCreateDraft, TodoCreateDraft } from './crea
 import { BUILTIN_LEDGER_CATEGORIES, categoryAliases } from './ledgerCategories'
 
 export type QuickCaptureKind = 'todo' | 'ledger' | 'note'
+export type InboxSuggestedKind = 'habit' | 'goal' | 'practice' | 'workout'
 export type CaptureConfidence = 'exact' | 'likely' | 'ambiguous'
 
 export type QuickCaptureCandidate =
   | { kind: 'todo'; confidence: CaptureConfidence; missingFields: string[]; evidence: string[]; draft: TodoCreateDraft }
   | { kind: 'ledger'; confidence: CaptureConfidence; missingFields: string[]; evidence: string[]; draft: LedgerCreateDraft }
-  | { kind: 'note'; confidence: CaptureConfidence; missingFields: string[]; evidence: string[]; draft: NoteCreateDraft }
+  | { kind: 'note'; confidence: CaptureConfidence; missingFields: string[]; evidence: string[]; suggestedKind?: InboxSuggestedKind; draft: NoteCreateDraft }
 
 export interface QuickCaptureResult {
   source: string
@@ -26,6 +27,12 @@ const PREFIXES: Array<{ regex: RegExp; kind: QuickCaptureKind; ledgerKind?: 'inc
   { regex: /^\s*(?:支出)\s*[:：]?\s*/u, kind: 'ledger', ledgerKind: 'expense' },
   { regex: /^\s*(?:收入)\s*[:：]?\s*/u, kind: 'ledger', ledgerKind: 'income' },
   { regex: /^\s*(?:笔记|记录)\s*[:：]?\s*/u, kind: 'note' }
+]
+const INBOX_ONLY_PREFIXES: Array<{ regex: RegExp; kind: InboxSuggestedKind; label: string }> = [
+  { regex: /^\s*(?:习惯)\s*[:：]?\s*/u, kind: 'habit', label: '习惯' },
+  { regex: /^\s*(?:目标)\s*[:：]?\s*/u, kind: 'goal', label: '目标' },
+  { regex: /^\s*(?:练习|题目)\s*[:：]?\s*/u, kind: 'practice', label: '练习' },
+  { regex: /^\s*(?:训练|健身)\s*[:：]?\s*/u, kind: 'workout', label: '训练' }
 ]
 
 function normalizeNumbers(value: string) {
@@ -68,6 +75,31 @@ function cleanText(source: string, tokens: string[]) {
   return value.replace(/[，,。；;]\s*$/u, '').replace(/\s+/g, ' ').trim()
 }
 
+function extractPriority(source: string) {
+  const definitions: Array<{ level: TodoCreateDraft['level']; regex: RegExp; label: string }> = [
+    { level: 'high', regex: /(?:高优先级|高优|紧急|!high|\bP0\b)/iu, label: '高优先级' },
+    { level: 'low', regex: /(?:低优先级|低优|!low|\bP2\b)/iu, label: '低优先级' },
+    { level: 'mid', regex: /(?:中优先级|中优|!mid|\bP1\b)/iu, label: '中优先级' }
+  ]
+  for (const definition of definitions) {
+    const match = definition.regex.exec(source)
+    if (match) return { level: definition.level, token: match[0], evidence: `优先级：${definition.label}` }
+  }
+  return { level: 'mid' as const, token: '', evidence: '' }
+}
+
+function extractTags(source: string) {
+  const tags: string[] = []
+  const tokens: string[] = []
+  for (const match of source.matchAll(/(?:^|\s)(#[\p{L}\p{N}_/-]+)/gu)) {
+    const token = match[1]
+    const tag = token.slice(1).replace(/^\/+|\/+$/g, '')
+    if (tag && !tags.includes(tag)) tags.push(tag)
+    tokens.push(token)
+  }
+  return { tags, tokens }
+}
+
 function findCategory(source: string, kind: 'income' | 'expense', custom: string[] = []) {
   const categories = [...new Set([...BUILTIN_LEDGER_CATEGORIES[kind], ...custom])]
   return categories.find((category) => category !== '其他' && (
@@ -85,19 +117,19 @@ function amountMatches(source: string) {
   return matches
 }
 
-function todoCandidate(body: string, date: string | null, confidence: CaptureConfidence, evidence: string[]): QuickCaptureCandidate {
+function todoCandidate(body: string, date: string | null, level: TodoCreateDraft['level'], confidence: CaptureConfidence, evidence: string[]): QuickCaptureCandidate {
   return {
     kind: 'todo', confidence, evidence,
     missingFields: body ? [] : ['text'],
-    draft: { text: body, level: 'mid', due_date: date, done: false, pinned: false }
+    draft: { text: body, level, due_date: date, done: false, pinned: false }
   }
 }
 
-function noteCandidate(body: string, confidence: CaptureConfidence, evidence: string[]): QuickCaptureCandidate {
+function noteCandidate(body: string, tags: string[], confidence: CaptureConfidence, evidence: string[], suggestedKind?: InboxSuggestedKind): QuickCaptureCandidate {
   return {
-    kind: 'note', confidence, evidence,
+    kind: 'note', confidence, evidence, suggestedKind,
     missingFields: body ? [] : ['body'],
-    draft: { title: null, body, tags: [], pinned: false, layout: 'default', image_url: null }
+    draft: { title: null, body, tags, pinned: false, layout: 'default', image_url: null }
   }
 }
 
@@ -134,17 +166,34 @@ export function parseQuickCapture(rawSource: string, context: QuickCaptureContex
   const source = normalizeNumbers(rawSource).trim()
   if (!source) return { source: rawSource, candidates: [], selectedKind: null }
 
+  const inboxOnlyPrefix = INBOX_ONLY_PREFIXES.find((item) => item.regex.test(source))
+  if (inboxOnlyPrefix) {
+    const body = source.replace(inboxOnlyPrefix.regex, '').trim()
+    const tags = extractTags(body)
+    const candidate = noteCandidate(
+      cleanText(body, tags.tokens), tags.tags, 'ambiguous',
+      [`显式${inboxOnlyPrefix.label}前缀`, '需要在 Inbox 确认必填字段'], inboxOnlyPrefix.kind
+    )
+    return { source: rawSource, candidates: [candidate], selectedKind: null }
+  }
+
   const prefix = PREFIXES.find((item) => item.regex.test(source))
   const body = prefix ? source.replace(prefix.regex, '').trim() : source
   const extractedDate = extractDate(body, context.today)
   const withoutDate = cleanText(body, extractedDate ? [extractedDate.token] : [])
+  const priority = extractPriority(withoutDate)
+  const tagResult = extractTags(body)
+  const todoBody = cleanText(withoutDate, [priority.token].filter(Boolean))
+  const noteBody = cleanText(body, tagResult.tokens)
+  const tagEvidence = tagResult.tags.length ? [`标签：${tagResult.tags.map((tag) => `#${tag}`).join(' ')}`] : []
+  const priorityEvidence = priority.evidence ? [priority.evidence] : []
 
   if (prefix?.kind === 'todo') {
-    const candidate = todoCandidate(withoutDate, extractedDate?.date ?? null, 'exact', ['显式待办前缀'])
+    const candidate = todoCandidate(todoBody, extractedDate?.date ?? null, priority.level, 'exact', ['显式待办前缀', ...priorityEvidence, ...tagEvidence])
     return { source: rawSource, candidates: [candidate], selectedKind: 'todo' }
   }
   if (prefix?.kind === 'note') {
-    const candidate = noteCandidate(body, 'exact', ['显式笔记前缀'])
+    const candidate = noteCandidate(noteBody, tagResult.tags, 'exact', ['显式笔记前缀', ...tagEvidence])
     return { source: rawSource, candidates: [candidate], selectedKind: 'note' }
   }
   if (prefix?.kind === 'ledger') {
@@ -169,7 +218,7 @@ export function parseQuickCapture(rawSource: string, context: QuickCaptureContex
     if (ledger.confidence !== 'ambiguous') return { source: rawSource, candidates: [ledger], selectedKind: 'ledger' }
   }
   if (todoSignal) {
-    const candidate = todoCandidate(withoutDate, extractedDate?.date ?? null, 'likely', ['日期与行动语义'])
+    const candidate = todoCandidate(todoBody, extractedDate?.date ?? null, priority.level, 'likely', ['日期与行动语义', ...priorityEvidence, ...tagEvidence])
     return { source: rawSource, candidates: [candidate], selectedKind: 'todo' }
   }
 
@@ -180,12 +229,12 @@ export function parseQuickCapture(rawSource: string, context: QuickCaptureContex
       selectedKind: null,
       candidates: [
         ledger,
-        todoCandidate(withoutDate, extractedDate?.date ?? null, 'ambiguous', []),
-        noteCandidate(body, 'ambiguous', [])
+        todoCandidate(todoBody, extractedDate?.date ?? null, priority.level, 'ambiguous', [...priorityEvidence, ...tagEvidence]),
+        noteCandidate(noteBody, tagResult.tags, 'ambiguous', tagEvidence)
       ]
     }
   }
 
-  const candidate = noteCandidate(body, 'likely', ['未发现明确待办或记账语义'])
+  const candidate = noteCandidate(noteBody, tagResult.tags, 'likely', ['未发现明确待办或记账语义', ...tagEvidence])
   return { source: rawSource, candidates: [candidate], selectedKind: 'note' }
 }

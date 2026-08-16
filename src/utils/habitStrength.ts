@@ -25,6 +25,9 @@ export interface HabitStrengthSummary {
   eligibleCount: number
 }
 
+const HALF_LIFE_OPPORTUNITIES = 28
+const MAX_OPPORTUNITIES = HALF_LIFE_OPPORTUNITIES * 8
+
 function parseDay(value: string) {
   const [year, month, day] = value.split('-').map(Number)
   return new Date(year, month - 1, day, 12)
@@ -40,52 +43,74 @@ function addDays(value: string, days: number) {
   return dayString(date)
 }
 
+function daysBetween(start: string, end: string) {
+  return Math.round((parseDay(end).getTime() - parseDay(start).getTime()) / 86_400_000)
+}
+
 function localCreatedDay(createdAt: string) {
   const date = new Date(createdAt)
   return Number.isNaN(date.getTime()) ? null : dayString(date)
 }
 
-function inclusiveDays(start: string, end: string) {
-  return Math.max(0, Math.round((parseDay(end).getTime() - parseDay(start).getTime()) / 86_400_000) + 1)
+type OpportunityState = 1 | 0 | null
+
+function opportunityState(habit: Habit, logs: HabitLog[]): OpportunityState {
+  const done = logs.filter((log) => (log.state ?? 'done') === 'done')
+  if (done.length === 0 && logs.some((log) => log.state === 'skipped')) return null
+  if ((habit.tracking_type ?? 'boolean') === 'numeric') {
+    const total = done.reduce((sum, log) => sum + Number(log.value ?? 0), 0)
+    const target = Number(habit.target_value ?? 0)
+    return (habit.target_mode ?? 'at_least') === 'at_most' ? (total <= target ? 1 : 0) : (total >= target ? 1 : 0)
+  }
+  return done.length >= Math.max(1, habit.target_count ?? 1) ? 1 : 0
+}
+
+function opportunities(habit: Habit, logs: HabitLog[], today: string) {
+  const created = localCreatedDay(habit.created_at) ?? today
+  if (created > today) return []
+  const periodDays = Math.max(1, Math.floor(habit.period_days ?? 1))
+  const total = Math.floor(daysBetween(created, today) / periodDays) + 1
+  const first = Math.max(0, total - MAX_OPPORTUNITIES)
+  const relevant = logs.filter((log) => log.habit_id === habit.id && log.log_date >= created && log.log_date <= today)
+  const result: Array<{ state: OpportunityState; index: number }> = []
+  for (let index = first; index < total; index++) {
+    const start = addDays(created, index * periodDays)
+    const end = [addDays(start, periodDays - 1), today].sort()[0]
+    result.push({ state: opportunityState(habit, relevant.filter((log) => log.log_date >= start && log.log_date <= end)), index })
+  }
+  return result
 }
 
 export function calculateHabitStrength(habit: Habit, logs: HabitLog[], today: string): HabitStrength {
-  const windowStart = addDays(today, -29)
-  const createdDay = localCreatedDay(habit.created_at) ?? today
-  const activeStart = createdDay > windowStart ? createdDay : windowStart
-  const activeDays = activeStart > today ? 0 : inclusiveDays(activeStart, today)
-  const dates = new Set(
-    logs
-      .filter((log) => log.habit_id === habit.id && log.log_date >= activeStart && log.log_date <= today)
-      .map((log) => log.log_date)
-  )
-  const completionRatio = activeDays ? dates.size / activeDays : 0
-  const completionRate = Math.round(completionRatio * 100)
+  const rows = opportunities(habit, logs, today)
+  const scored = rows.filter((row): row is { state: 0 | 1; index: number } => row.state !== null)
+  const completed = scored.filter((row) => row.state === 1).length
+  const completionRate = scored.length ? Math.round(completed / scored.length * 100) : 0
+  const recent = scored.slice(-7)
+  const recentRate = recent.length ? Math.round(recent.filter((row) => row.state === 1).length / recent.length * 100) : 0
 
-  const recentStart = [addDays(today, -6), activeStart].sort().at(-1)!
-  const recentDays = activeDays ? inclusiveDays(recentStart, today) : 0
-  let recentDone = 0
-  for (let day = recentStart; recentDays > 0 && day <= today; day = addDays(day, 1)) {
-    if (dates.has(day)) recentDone++
-  }
-  const recentRatio = recentDays ? recentDone / recentDays : 0
-  const recentRate = Math.round(recentRatio * 100)
-
-  let cursor = dates.has(today) ? today : addDays(today, -1)
   let currentStreak = 0
-  while (cursor >= activeStart && dates.has(cursor)) {
+  for (let index = rows.length - 1; index >= 0; index--) {
+    if (rows[index].state === null) continue
+    if (rows[index].state !== 1) break
     currentStreak++
-    cursor = addDays(cursor, -1)
+  }
+  if (scored.length < 3) {
+    return { score: null, band: 'collecting', completionRate, recentRate, currentStreak, activeDays: rows.length }
   }
 
-  if (activeDays < 3) {
-    return { score: null, band: 'collecting', completionRate, recentRate, currentStreak, activeDays }
+  const newestIndex = rows.at(-1)?.index ?? 0
+  let weighted = 0
+  let weightTotal = 0
+  for (const row of scored) {
+    const age = newestIndex - row.index
+    const weight = Math.pow(0.5, age / HALF_LIFE_OPPORTUNITIES)
+    weighted += row.state * weight
+    weightTotal += weight
   }
-  const score = Math.max(0, Math.min(100, Math.round(
-    completionRatio * 60 + Math.min(currentStreak, 7) / 7 * 25 + recentRatio * 15
-  )))
+  const score = Math.max(0, Math.min(100, Math.round(weighted / weightTotal * 100)))
   const band: HabitStrengthBand = score >= 80 ? 'strong' : score >= 50 ? 'stable' : 'attention'
-  return { score, band, completionRate, recentRate, currentStreak, activeDays }
+  return { score, band, completionRate, recentRate, currentStreak, activeDays: rows.length }
 }
 
 export function habitStrengthInsightText(summary: HabitStrengthSummary) {
@@ -96,12 +121,7 @@ export function habitStrengthInsightText(summary: HabitStrengthSummary) {
 }
 
 export function calculateHabitStrengths(habits: Habit[], logs: HabitLog[], today: string): HabitStrengthRow[] {
-  return habits.map((habit) => ({
-    habitId: habit.id,
-    name: habit.name,
-    emoji: habit.emoji,
-    ...calculateHabitStrength(habit, logs, today)
-  }))
+  return habits.map((habit) => ({ habitId: habit.id, name: habit.name, emoji: habit.emoji, ...calculateHabitStrength(habit, logs, today) }))
 }
 
 export function summarizeHabitStrengths(rows: HabitStrengthRow[]): HabitStrengthSummary {
@@ -115,10 +135,8 @@ export function summarizeHabitStrengths(rows: HabitStrengthRow[]): HabitStrength
       attention: eligible.filter((row) => row.band === 'attention').length
     },
     strongest: sorted[0] ?? null,
-    attention: eligible
-      .filter((row) => row.band === 'attention')
-      .sort((a, b) => (a.score ?? 0) - (b.score ?? 0) || a.name.localeCompare(b.name) || a.habitId.localeCompare(b.habitId))
-      .slice(0, 3),
+    attention: eligible.filter((row) => row.band === 'attention')
+      .sort((a, b) => (a.score ?? 0) - (b.score ?? 0) || a.name.localeCompare(b.name) || a.habitId.localeCompare(b.habitId)).slice(0, 3),
     eligibleCount: eligible.length
   }
 }

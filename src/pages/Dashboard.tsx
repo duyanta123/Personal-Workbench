@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useState } from 'react'
 import {
   Check,
@@ -31,6 +31,12 @@ import { useDashboardSummary } from '../hooks/useWorkbenchSummary'
 import { useUiStore } from '../stores/ui'
 import { useAuth } from '../hooks/useAuth'
 import Input from '../components/ui/Input'
+import InboxCard from '../components/ui/InboxCard'
+import { useInboxItems, useTodayWorkspace } from '../hooks/useTodayWorkspace'
+import type { TodayWorkspace } from '../hooks/useTodayWorkspace'
+import { useUpdateLedgerEntry } from '../hooks/useLedger'
+import Button from '../components/ui/Button'
+import { formatMinor } from '../utils/money'
 
 /** 首页快捷记录：4 个按钮直达对应模块（页面新建表单常驻） */
 const QUICK_ADD: { to: string; icon: LucideIcon; name: string; cls: string }[] = [
@@ -52,7 +58,7 @@ function QuickAdd() {
         <div className="text-sm font-extrabold text-ink">快速记录</div>
       </div>
       <form className="mt-3 flex gap-2" onSubmit={(event) => { event.preventDefault(); if (!source.trim() || !canWrite) return; openQuickCapture(source.trim()); setSource('') }}>
-        <Input value={source} onChange={(event) => setSource(event.target.value)} placeholder={canWrite ? '一句话记录，如：午饭 45' : '离线只读，联网后可记录'} aria-label="智能快速记录" disabled={!canWrite} maxLength={100000} className="min-w-0 flex-1" />
+        <Input value={source} onChange={(event) => setSource(event.target.value)} placeholder={canWrite ? '一句话记录，如：午饭 45' : '登录后可记录'} aria-label="智能快速记录" disabled={!canWrite} maxLength={100000} className="min-w-0 flex-1" />
         <button type="submit" disabled={!canWrite || !source.trim()} className="rounded-xl bg-accent px-3 text-xs font-semibold text-white disabled:opacity-45">解析</button>
       </form>
       <p className="mt-1.5 text-[10px] text-ink-3">本地解析 · Ctrl/Cmd + K 随时打开</p>
@@ -141,6 +147,26 @@ function TodoTile({ todos, total, done }: { todos: Todo[]; total: number; done: 
   )
 }
 
+function TodayActions({ workspace, today }: { workspace: TodayWorkspace; today: string }) {
+  const navigate = useNavigate(); const updateLedger = useUpdateLedgerEntry(); const push = useToastStore((state) => state.push)
+  const doneHabitIds = new Set(workspace.habit_logs.filter((log) => log.state === 'done').map((log) => log.habit_id))
+  const overdue = workspace.todos.filter((todo) => todo.due_date && todo.due_date < today).length
+  async function confirmLedger(id: string) {
+    try { await updateLedger.mutateAsync({ id, patch: { status: 'posted' } }); push({ kind: 'success', message: '周期账目已确认入账' }) }
+    catch { push({ kind: 'error', message: '确认入账失败' }) }
+  }
+  return (
+    <section className="rounded-2xl border border-border bg-surface p-4">
+      <div className="grid gap-3 md:grid-cols-3">
+        <button onClick={() => navigate('/todos')} className="rounded-xl bg-nested p-3 text-left"><div className="text-xs text-ink-3">今日与逾期待办</div><div className="mt-1 text-lg font-bold text-ink">{workspace.todos.length} 项</div>{overdue > 0 && <span className="text-xs text-danger">{overdue} 项逾期</span>}</button>
+        <button onClick={() => navigate('/checkins')} className="rounded-xl bg-nested p-3 text-left"><div className="text-xs text-ink-3">今日习惯</div><div className="mt-1 text-lg font-bold text-ink">{doneHabitIds.size}/{workspace.habits.length}</div><span className="text-xs text-ink-3">已完成</span></button>
+        <div className="rounded-xl bg-nested p-3"><div className="text-xs text-ink-3">待确认周期账目</div><div className="mt-1 text-lg font-bold text-ink">{workspace.planned_ledger.length} 笔</div><button onClick={() => navigate('/ledger')} className="text-xs text-accent">查看 Upcoming</button></div>
+      </div>
+      {workspace.planned_ledger.length > 0 && <ul className="mt-3 divide-y divide-border">{workspace.planned_ledger.slice(0, 5).map((entry) => <li key={entry.id} className="flex items-center gap-2 py-2 text-xs"><span className="text-ink-3">{entry.entry_date}</span><span className="min-w-0 flex-1 truncate text-ink">{entry.category}</span><span className="font-semibold tabular-nums text-ink">{formatMinor(entry.amount_minor ?? Math.round(entry.amount * 100), entry.currency_code)}</span><Button size="sm" onClick={() => void confirmLedger(entry.id)} disabled={updateLedger.isPending}>确认</Button></li>)}</ul>}
+    </section>
+  )
+}
+
 /** 首页月度开销磁贴：本月支出 + 分类水平条 */
 function MoneyTile({ expense, categories }: { expense: number; categories: [string, number][] }) {
   const navigate = useNavigate()
@@ -188,11 +214,18 @@ function MoneyTile({ expense, categories }: { expense: number; categories: [stri
 }
 
 export default function Dashboard() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  // focus=inbox 展开全部；focus=<id>（搜索定位）同样启用全量列表并定位到具体项。
+  const focusValue = searchParams.get('focus')
+  const inboxFocus = focusValue !== null
+  const inboxFocusId = focusValue && focusValue !== 'inbox' ? focusValue : null
   const today = useCurrentDate()
   const hour = useCurrentHour()
   const greet = hour < 6 ? '夜深了' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好'
   const month = today.slice(0, 7)
   const summary = useDashboardSummary(today, month)
+  const workspace = useTodayWorkspace(today)
+  const fullInbox = useInboxItems(inboxFocus)
   const data = summary.data
   const series = (data?.weekly_habits ?? []).map((point) => ({
     date: point.date,
@@ -205,8 +238,8 @@ export default function Dashboard() {
     return (
       <div className="space-y-4">
         <PageHeader
-          eyebrow="OVERVIEW"
-          title={greet}
+          eyebrow="TODAY"
+          title={`今日工作台 · ${greet}`}
           description={`${today} · 今天也按自己的节奏来。`}
         />
         <QueryError onRetry={() => summary.refetch()} />
@@ -219,8 +252,8 @@ export default function Dashboard() {
       {/* 问候 */}
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <PageHeader
-          eyebrow="OVERVIEW"
-          title={greet}
+          eyebrow="TODAY"
+          title="今日工作台"
           description={`${today} · 今天也按自己的节奏来。`}
         />
         <div className="hidden h-14 w-14 items-center justify-center rounded-2xl bg-surface text-m1 shadow-card md:flex">
@@ -228,18 +261,35 @@ export default function Dashboard() {
         </div>
       </div>
 
+      <QuickAdd />
+      <InboxCard
+        items={inboxFocus ? (fullInbox.data ?? workspace.data?.inbox ?? []) : (workspace.data?.inbox ?? [])}
+        focusId={inboxFocusId}
+      />
+      {inboxFocus && (
+        <button
+          type="button"
+          className="text-left text-xs font-medium text-accent hover:text-accent-hover"
+          onClick={() => {
+            const next = new URLSearchParams(searchParams)
+            next.delete('focus')
+            setSearchParams(next, { replace: true })
+          }}
+        >
+          返回 Today
+        </button>
+      )}
+      {workspace.data && <TodayActions workspace={workspace.data} today={today} />}
+
       {/* Section 1 · 今日节奏 */}
       <div>
         <SectionTitle zh="今日节奏" en="Today · Rhythm" />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          <div className="lg:col-span-4">
+          <div className="lg:col-span-6">
             <ClockCard />
           </div>
-          <div className="lg:col-span-4">
+          <div className="lg:col-span-6">
             <FocusList />
-          </div>
-          <div className="lg:col-span-4">
-            <QuickAdd />
           </div>
           <div className="lg:col-span-12">
             {data?.overview && <OverviewTile date={today} overview={data.overview} />}
@@ -256,7 +306,7 @@ export default function Dashboard() {
           </div>
           <div className="lg:col-span-5">
       <TodoTile
-        todos={todayTodos}
+        todos={workspace.data?.todos ?? todayTodos}
         total={data?.overview.todo_total ?? 0}
         done={data?.overview.todo_done ?? 0}
       />

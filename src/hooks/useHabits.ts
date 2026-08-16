@@ -1,13 +1,14 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { enqueueOperation } from '../lib/outbox'
+import { createEntity, deleteEntity, updateEntity } from '../lib/domainCommands'
 import { afterCursor, cursorScope, cursorToken, getPageCursor, rememberPageCursor } from '../lib/cursorPagination'
 import type { Habit, HabitLog } from '../types'
 import { useAuth } from './useAuth'
 import { useCurrentDate } from './useCurrentDate'
 import { rpcArray, rpcNumber, rpcRecord } from '../lib/rpcSchemas'
 import { calculateHabitStrengths, summarizeHabitStrengths } from '../utils/habitStrength'
+import { listCommands } from '../lib/commands'
 
 export const habitsKey = (userId: string | null) => ['habits', userId] as const
 export const habitLogsKey = (userId: string | null) => ['habit_logs', userId] as const
@@ -34,6 +35,7 @@ function linkedHabitKeys(userId: string | null) {
     habitsKey(userId),
     habitLogsKey(userId),
     ['dashboard_summary', userId] as const,
+    ['today_workspace', userId] as const,
     ['workbench_insights', userId] as const,
     ['habit_strengths', userId] as const,
     ['focus_items', userId] as const
@@ -114,9 +116,12 @@ export function useAddHabit() {
   const qc = useQueryClient()
   const { userId } = useAuth()
   return useMutation({
-    mutationFn: async (input: { name: string; emoji: string; pinned?: boolean }) => {
+    mutationFn: async (input: {
+      name: string; emoji: string; pinned?: boolean; tracking_type?: Habit['tracking_type']; period_days?: number;
+      target_count?: number; target_value?: number | null; target_mode?: Habit['target_mode']; reminder_time?: string | null
+    }) => {
       if (!userId) throw new Error('未登录')
-      return enqueueOperation<Habit>(userId, 'habit.create', input)
+      return createEntity(qc, userId, 'habit', input)
     },
     onSuccess: () => linkedHabitKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -127,8 +132,8 @@ export function useDeleteHabit() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase!.from('habits').delete().eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return deleteEntity(qc, userId, 'habit', id)
     },
     onSuccess: () => {
       linkedHabitKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
@@ -143,7 +148,7 @@ export function useToggleHabitLogDate() {
   const pendingRef = useRef(new Set<string>())
   const [pending, setPending] = useState<Set<string>>(() => new Set())
   const mutation = useMutation({
-    mutationFn: async ({ habitId, date, done }: { habitId: string; date: string; done?: boolean }) => {
+    mutationFn: async ({ habitId, date, done, state = 'done', value = null }: { habitId: string; date: string; done?: boolean; state?: HabitLog['state']; value?: number | null }) => {
       if (!userId) throw new Error('未登录')
       const pendingKey = `${habitId}:${date}`
       if (pendingRef.current.has(pendingKey)) return
@@ -153,12 +158,19 @@ export function useToggleHabitLogDate() {
         const cached = qc
           .getQueriesData<HabitLog[]>({ queryKey: habitLogsKey(userId) })
           .some(([, logs]) => logs?.some((log) => log.habit_id === habitId && log.log_date === date))
-        const { error } = await supabase!.rpc('set_habit_log', {
-          p_habit_id: habitId,
-          p_log_date: date,
-          p_done: done ?? !cached
-        })
-        if (error) throw error
+        const next = done ?? !cached
+        const existing = qc.getQueriesData<HabitLog[]>({ queryKey: habitLogsKey(userId) })
+          .flatMap(([, logs]) => logs ?? []).find((log) => log.habit_id === habitId && log.log_date === date)
+        if (next && !existing) {
+          const parent = (await listCommands(userId)).find((command) =>
+            command.entityId === habitId && command.kind === 'habit.create'
+              && ['pending', 'syncing', 'failed'].includes(command.status))
+          await createEntity(qc, userId, 'habit_log', { habit_id: habitId, log_date: date, state, value }, {
+            dependsOnCommandIds: parent ? [parent.commandId] : []
+          })
+        }
+        else if (next && existing) await updateEntity(qc, userId, 'habit_log', existing.id, { state, value })
+        else if (!next && existing) await deleteEntity(qc, userId, 'habit_log', existing.id)
       } finally {
         pendingRef.current.delete(pendingKey)
         setPending(new Set(pendingRef.current))
@@ -188,8 +200,8 @@ export function useToggleHabitPin() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async ({ id, pinned }: { id: string; pinned: boolean }) => {
-      const { error } = await supabase!.from('habits').update({ pinned }).eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return updateEntity(qc, userId, 'habit', id, { pinned })
     },
     onSuccess: () => linkedHabitKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -199,9 +211,9 @@ export function useUpdateHabit() {
   const qc = useQueryClient()
   const { userId } = useAuth()
   return useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Pick<Habit, 'name' | 'emoji' | 'pinned'>> }) => {
-      const { error } = await supabase!.from('habits').update(patch).eq('id', id)
-      if (error) throw error
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Pick<Habit, 'name' | 'emoji' | 'pinned' | 'tracking_type' | 'period_days' | 'target_count' | 'target_value' | 'target_mode' | 'reminder_time'>> }) => {
+      if (!userId) throw new Error('未登录')
+      return updateEntity(qc, userId, 'habit', id, patch)
     },
     onSuccess: () => linkedHabitKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -243,7 +255,6 @@ export function useHabitStrengths(date: string) {
   return useQuery({
     queryKey: habitStrengthsKey(userId, date),
     queryFn: async () => {
-      const start = dateMinus(date, 29)
       const [habits, logs] = await Promise.all([
         collectHabitPages<Habit>(async (from, to) => {
           const { data, error } = await supabase!.from('habits').select('*').order('id', { ascending: true }).range(from, to)
@@ -254,7 +265,6 @@ export function useHabitStrengths(date: string) {
           const { data, error } = await supabase!
             .from('habit_logs')
             .select('*')
-            .gte('log_date', start)
             .lte('log_date', date)
             .order('log_date', { ascending: true })
             .order('id', { ascending: true })

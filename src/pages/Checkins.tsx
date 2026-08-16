@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Check, ChevronLeft, ChevronRight, Flame, Pencil, Pin, PinOff, Plus, Search, Trash2, X } from 'lucide-react'
+import { Bell, BellOff, Check, ChevronLeft, ChevronRight, CircleSlash2, Flame, Pencil, Pin, PinOff, Plus, Search, Trash2, X } from 'lucide-react'
 import {
   useAddHabit,
   useDeleteHabit,
@@ -20,7 +20,7 @@ import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
 import { buildMonthGrid, monthCompletion } from '../utils/calendar'
 import { resolveIcon } from '../utils/icon'
-import type { Habit } from '../types'
+import type { Habit, HabitLogState, HabitTargetMode, HabitTrackingType } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
@@ -36,6 +36,8 @@ import { cn } from '../lib/cn'
 import QueryError from '../components/ui/QueryError'
 import { useCurrentDate } from '../hooks/useCurrentDate'
 import { useClampPage } from '../hooks/useClampPage'
+import { useHabitReminders } from '../hooks/useHabitReminders'
+import EntityTemplatePanel from '../components/ui/EntityTemplatePanel'
 
 const WEEK = ['一', '二', '三', '四', '五', '六', '日']
 
@@ -74,13 +76,21 @@ export default function Checkins() {
 
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('flame')
+  const [trackingType, setTrackingType] = useState<HabitTrackingType>('boolean')
+  const [periodDays, setPeriodDays] = useState(1)
+  const [targetCount, setTargetCount] = useState(1)
+  const [targetValue, setTargetValue] = useState('')
+  const [targetMode, setTargetMode] = useState<HabitTargetMode>('at_least')
+  const [reminderTime, setReminderTime] = useState('')
+  const [numericValues, setNumericValues] = useState<Record<string, string>>({})
   const [editingId, setEditingId] = useState<string | null>(null)
 
-  const doneToday = new Set((logs ?? []).filter((l) => l.log_date === today).map((l) => l.habit_id))
+  const doneToday = new Set((logs ?? []).filter((l) => l.log_date === today && (l.state ?? 'done') === 'done').map((l) => l.habit_id))
+  const skippedToday = new Set((logs ?? []).filter((l) => l.log_date === today && l.state === 'skipped').map((l) => l.habit_id))
   const byHabit = new Map<string, Set<string>>()
   for (const l of logs ?? []) {
     const s = byHabit.get(l.habit_id) ?? new Set<string>()
-    s.add(l.log_date)
+    if ((l.state ?? 'done') === 'done') s.add(l.log_date)
     byHabit.set(l.habit_id, s)
   }
 
@@ -103,6 +113,7 @@ export default function Checkins() {
   const rankings = (statsQuery.data?.streaks ?? []).slice(0, 6)
   const habitTotal = statsQuery.data?.streaks.length ?? habitsQuery.data?.total ?? 0
   const strengthByHabit = new Map((strengthsQuery.data?.rows ?? []).map((row) => [row.habitId, row]))
+  const reminders = useHabitReminders(userId, habits, logs ?? [], today)
 
   const { requestDelete, isPending: isDeletePending, remainingSeconds } = useDeferredDelete<Habit, HabitPage>({
     key: habitsListKey(userId, page, deferredQuery),
@@ -115,13 +126,18 @@ export default function Checkins() {
     }
   })
 
-  async function toggleToday(h: Habit) {
+  async function recordToday(h: Habit, state: HabitLogState = 'done') {
     const wasDone = doneToday.has(h.id)
+    const value = (h.tracking_type ?? 'boolean') === 'numeric' && state === 'done' ? Number(numericValues[h.id]) : null
+    if (state === 'done' && (h.tracking_type ?? 'boolean') === 'numeric' && !Number.isFinite(value)) {
+      push({ kind: 'error', message: '请输入本次数值' })
+      return
+    }
     try {
-      await toggleLog.mutateAsync({ habitId: h.id, date: today, done: !wasDone })
+      await toggleLog.mutateAsync({ habitId: h.id, date: today, done: state === 'skipped' || !wasDone, state, value })
       push({
-        kind: wasDone ? 'info' : 'success',
-        message: wasDone ? `取消「${h.name}」的今日打卡` : `「${h.name}」打卡成功`
+        kind: state === 'skipped' || wasDone ? 'info' : 'success',
+        message: state === 'skipped' ? `已跳过「${h.name}」` : wasDone ? `取消「${h.name}」的今日打卡` : `「${h.name}」打卡成功`
       })
     } catch {
       push({ kind: 'error', message: '打卡保存失败，请重试' })
@@ -154,14 +170,21 @@ export default function Checkins() {
     if (!n) return
     try {
       if (editingId) {
-        await updateHabit.mutateAsync({ id: editingId, patch: { name: n, emoji: icon || 'flame' } })
+        await updateHabit.mutateAsync({ id: editingId, patch: {
+          name: n, emoji: icon || 'flame', tracking_type: trackingType, period_days: periodDays,
+          target_count: targetCount, target_value: trackingType === 'numeric' ? Number(targetValue) : null,
+          target_mode: targetMode, reminder_time: reminderTime || null
+        } })
         push({ kind: 'success', message: `已更新习惯「${n}」` })
       } else {
-        await addHabit.mutateAsync({ name: n, emoji: icon || 'flame' })
+        await addHabit.mutateAsync({ name: n, emoji: icon || 'flame', tracking_type: trackingType, period_days: periodDays,
+          target_count: targetCount, target_value: trackingType === 'numeric' ? Number(targetValue) : null,
+          target_mode: targetMode, reminder_time: reminderTime || null })
         push({ kind: 'success', message: `已添加习惯「${n}」` })
       }
       setName('')
       setIcon('flame')
+      setTrackingType('boolean'); setPeriodDays(1); setTargetCount(1); setTargetValue(''); setTargetMode('at_least'); setReminderTime('')
       setEditingId(null)
     } catch {
       push({ kind: 'error', message: editingId ? '习惯更新失败，请重试' : '习惯添加失败，请重试' })
@@ -172,6 +195,12 @@ export default function Checkins() {
     setEditingId(h.id)
     setName(h.name)
     setIcon(h.emoji)
+    setTrackingType(h.tracking_type ?? 'boolean')
+    setPeriodDays(h.period_days ?? 1)
+    setTargetCount(h.target_count ?? 1)
+    setTargetValue(h.target_value == null ? '' : String(h.target_value))
+    setTargetMode(h.target_mode ?? 'at_least')
+    setReminderTime(h.reminder_time?.slice(0, 5) ?? '')
   }
 
   return (
@@ -180,11 +209,38 @@ export default function Checkins() {
         eyebrow="HABITS"
         title="习惯打卡"
         description="每天坚持一点点。"
+        actions={reminders.supported ? (
+          <Button size="sm" variant="secondary" onClick={() => {
+            if (reminders.enabled) reminders.disable()
+            else void reminders.enable().then(() => push({ kind: 'success', message: '习惯提醒已开启' })).catch((cause) => push({ kind: 'error', message: cause instanceof Error ? cause.message : '通知开启失败' }))
+          }}>
+            {reminders.enabled ? <BellOff size={14} /> : <Bell size={14} />}{reminders.enabled ? '关闭提醒' : '开启提醒'}
+          </Button>
+        ) : undefined}
       />
 
       {(habitsQuery.isError || logsQuery.isError || statsQuery.isError || strengthsQuery.isError) && (
         <QueryError onRetry={() => { habitsQuery.refetch(); logsQuery.refetch(); statsQuery.refetch(); strengthsQuery.refetch() }} />
       )}
+
+      <EntityTemplatePanel
+        kind="habit"
+        canSave={Boolean(name.trim()) && (trackingType !== 'numeric' || Number.isFinite(Number(targetValue)))}
+        draft={{
+          name: name.trim(), emoji: icon || 'flame', tracking_type: trackingType,
+          period_days: periodDays, target_count: targetCount,
+          target_value: trackingType === 'numeric' ? Number(targetValue) : null,
+          target_mode: targetMode, reminder_time: reminderTime || null
+        }}
+        instantiate={(payload) => addHabit.mutateAsync({
+          name: String(payload.name ?? ''), emoji: String(payload.emoji ?? 'flame'),
+          tracking_type: payload.tracking_type === 'numeric' ? 'numeric' : 'boolean',
+          period_days: Number(payload.period_days ?? 1), target_count: Number(payload.target_count ?? 1),
+          target_value: payload.tracking_type === 'numeric' ? Number(payload.target_value ?? 0) : null,
+          target_mode: payload.target_mode === 'at_most' ? 'at_most' : 'at_least',
+          reminder_time: typeof payload.reminder_time === 'string' ? payload.reminder_time : null
+        })}
+      />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-4">
@@ -201,24 +257,24 @@ export default function Checkins() {
           </div>
 
           {/* 添加习惯 */}
-          <form onSubmit={handleAdd} className="flex gap-2 rounded-2xl border border-border bg-surface p-4">
-            <IconPicker value={icon} onChange={setIcon} aria-label="选择图标" />
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="习惯名称，如：喝水 8 杯"
-              maxLength={200}
-              className="flex-1"
-            />
-            <Button type="submit" disabled={!name.trim()}>
-              <Plus size={16} />
-              {editingId ? '保存' : '添加'}
-            </Button>
-            {editingId && (
-              <IconButton type="button" onClick={() => { setEditingId(null); setName(''); setIcon('flame') }} aria-label="取消编辑">
-                <X size={16} />
-              </IconButton>
-            )}
+          <form onSubmit={handleAdd} className="space-y-3 rounded-lg border border-border bg-surface p-4">
+            <div className="flex gap-2">
+              <IconPicker value={icon} onChange={setIcon} aria-label="选择图标" />
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="习惯名称，如：喝水" maxLength={200} className="flex-1" />
+              <Button type="submit" disabled={!name.trim() || (trackingType === 'numeric' && !(Number(targetValue) >= 0))}>
+                <Plus size={16} />{editingId ? '保存' : '添加'}
+              </Button>
+              {editingId && <IconButton type="button" onClick={() => { setEditingId(null); setName(''); setIcon('flame'); setTrackingType('boolean'); setPeriodDays(1); setTargetCount(1); setTargetValue(''); setReminderTime('') }} aria-label="取消编辑"><X size={16} /></IconButton>}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <label htmlFor="habit-tracking-type" className="text-xs text-ink-2">类型<select id="habit-tracking-type" value={trackingType} onChange={(e) => setTrackingType(e.target.value as HabitTrackingType)} className="mt-1 w-full rounded-lg border border-border bg-page px-3 py-2 text-sm text-ink"><option value="boolean">完成次数</option><option value="numeric">数值目标</option></select></label>
+              <label htmlFor="habit-period-days" className="text-xs text-ink-2">周期天数<Input id="habit-period-days" className="mt-1" type="number" min="1" max="365" value={periodDays} onChange={(e) => setPeriodDays(Number(e.target.value))} /></label>
+              {trackingType === 'boolean' ? <label htmlFor="habit-target-count" className="text-xs text-ink-2">目标次数<Input id="habit-target-count" className="mt-1" type="number" min="1" max="365" value={targetCount} onChange={(e) => setTargetCount(Number(e.target.value))} /></label> : <>
+                <label htmlFor="habit-target-value" className="text-xs text-ink-2">目标值<Input id="habit-target-value" className="mt-1" type="number" step="any" value={targetValue} onChange={(e) => setTargetValue(e.target.value)} /></label>
+                <label htmlFor="habit-target-mode" className="text-xs text-ink-2">判断<select id="habit-target-mode" value={targetMode} onChange={(e) => setTargetMode(e.target.value as HabitTargetMode)} className="mt-1 w-full rounded-lg border border-border bg-page px-3 py-2 text-sm text-ink"><option value="at_least">至少</option><option value="at_most">至多</option></select></label>
+              </>}
+              <label htmlFor="habit-reminder-time" className="text-xs text-ink-2">提醒时间<Input id="habit-reminder-time" className="mt-1" type="time" value={reminderTime} onChange={(e) => setReminderTime(e.target.value)} /></label>
+            </div>
           </form>
 
           {/* 搜索 */}
@@ -252,6 +308,7 @@ export default function Checkins() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {visibleHabits.map((h) => {
             const done = doneToday.has(h.id)
+            const skipped = skippedToday.has(h.id)
             const streak = streakByHabit.get(h.id) ?? 0
             const logged = byHabit.get(h.id) ?? new Set<string>()
             const rate = monthCompletion(logged, year, month, today)
@@ -267,17 +324,18 @@ export default function Checkins() {
               >
                 <div className="flex items-start justify-between">
                   <button
-                    onClick={() => toggleToday(h)}
+                    onClick={() => void recordToday(h)}
                     disabled={isDeletePending(h.id) || toggleLog.isPendingFor(h.id, today)}
                     aria-label="打卡"
                     className={cn(
                       'flex h-11 w-11 items-center justify-center rounded-2xl transition-colors duration-150',
-                      done ? 'bg-m1/15' : 'bg-nested hover:bg-hover'
+                      done ? 'bg-m1/15' : skipped ? 'bg-m3/10' : 'bg-nested hover:bg-hover'
                     )}
                   >
-                    <Icon size={20} className={done ? 'text-m1' : 'text-ink-2'} />
+                    <Icon size={20} className={done ? 'text-m1' : skipped ? 'text-m3' : 'text-ink-2'} />
                   </button>
                   <div className="flex gap-0.5">
+                    <IconButton size="sm" onClick={() => void recordToday(h, 'skipped')} disabled={isDeletePending(h.id) || toggleLog.isPendingFor(h.id, today)} aria-label="跳过今天" title="跳过今天"><CircleSlash2 size={15} /></IconButton>
                     <IconButton
                       size="sm"
                       onClick={() => startEdit(h)}
@@ -311,15 +369,14 @@ export default function Checkins() {
                   </div>
                 </div>
                 <div className="mt-3 text-sm font-medium text-ink">{h.name}</div>
+                {(h.tracking_type ?? 'boolean') === 'numeric' && !done && !skipped && <div className="mt-2 flex items-center gap-2"><Input type="number" step="any" aria-label={`${h.name} 本次数值`} value={numericValues[h.id] ?? ''} onChange={(event) => setNumericValues((current) => ({ ...current, [h.id]: event.target.value }))} placeholder={`${h.target_mode === 'at_most' ? '至多' : '至少'} ${h.target_value ?? 0}`} /><Button size="sm" onClick={() => void recordToday(h)}>记录</Button></div>}
                 {isDeletePending(h.id) && <div className="mt-1 text-[10px] font-medium text-danger">待删除 {remainingSeconds(h.id)}s</div>}
                 <div className="mt-1 flex items-center gap-1.5 text-xs text-ink-3">
                   {done ? (
                     <span className="inline-flex items-center gap-0.5 font-medium text-m1">
                       今天已打卡 <Check size={12} />
                     </span>
-                  ) : (
-                    '今天还没打卡'
-                  )}
+                  ) : skipped ? '今天已跳过' : '今天还没打卡'}
                   <span className="mx-0.5">·</span>
                   <span className="tabular-nums">连续 {streak} 天</span>
                   <span className="mx-0.5">·</span>
@@ -332,9 +389,9 @@ export default function Checkins() {
                       习惯强度：{strength.score === null ? '积累中' : `${strength.score} 分 · ${strength.band === 'strong' ? '强劲' : strength.band === 'stable' ? '稳定' : '需关注'}`}
                     </summary>
                     <div className="mt-2 grid grid-cols-3 gap-2 text-center text-[11px] text-ink-3">
-                      <span>30 天完成率<br /><b className="text-ink">{strength.completionRate}%</b></span>
-                      <span>当前连续<br /><b className="text-ink">{strength.currentStreak} 天</b></span>
-                      <span>近 7 天<br /><b className="text-ink">{strength.recentRate}%</b></span>
+                      <span>机会完成率<br /><b className="text-ink">{strength.completionRate}%</b></span>
+                      <span>连续机会<br /><b className="text-ink">{strength.currentStreak} 次</b></span>
+                      <span>近 7 次机会<br /><b className="text-ink">{strength.recentRate}%</b></span>
                     </div>
                     {strength.score === null && <p className="mt-2 text-ink-3">记录满 3 个有效观察日后生成评分。</p>}
                   </details>
@@ -361,7 +418,7 @@ export default function Checkins() {
                           type="button"
                           disabled={isDeletePending(h.id) || toggleLog.isPendingFor(h.id, d) || (!isLogged && !fillable && !isToday)}
                           onClick={() => {
-                            if (isToday) toggleToday(h)
+                            if (isToday) void recordToday(h)
                             else if (fillable) backfill(h, d)
                           }}
                           title={

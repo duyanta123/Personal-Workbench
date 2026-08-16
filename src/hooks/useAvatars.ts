@@ -5,7 +5,7 @@ import type { UserAvatar } from '../types'
 import { compressImage, validateAvatarFile } from '../utils/avatar'
 import { useAuth } from './useAuth'
 import { reconcileAvatarFiles } from '../utils/avatarReconcile'
-import { enqueueOperation } from '../lib/outbox'
+import { enqueueCommand } from '../lib/commands'
 import { getLocalValue, localKeys, setLocalValue } from '../lib/localData'
 
 export const avatarsKey = (userId: string | null) => ['avatars', userId] as const
@@ -159,18 +159,18 @@ export function useUploadAvatar() {
 
       let operation
       try {
-        operation = await enqueueOperation<{ evicted_paths?: string[] }>(
-          uid,
-          'avatar.register',
-          { path },
-          operationId
-        )
+        operation = await enqueueCommand(uid, {
+          kind: 'avatar.create',
+          commandId: operationId,
+          payload: { storage_path: path }
+        })
       } catch (error) {
         await supabase!.storage.from('avatars').remove([path])
         throw error
       }
 
-      const evicted = operation.data?.evicted_paths ?? []
+      const evictedRows = operation.data?.evicted_paths
+      const evicted = Array.isArray(evictedRows) ? evictedRows.map(String) : []
       if (evicted.length > 0) {
         await supabase!.storage.from('avatars').remove(evicted).catch(() => undefined)
       }

@@ -7,6 +7,12 @@ export const queryClient = new QueryClient({
       staleTime: 30 * 1000,
       retry: 1,
       refetchOnReconnect: true
+    },
+    mutations: {
+      // 离线优先：写操作由 commands.ts 的本地命令队列接管（IndexedDB outbox），
+      // 不允许 React Query 的网络门控（默认 networkMode:'online'）在离线时
+      // 暂停 mutationFn —— 否则离线创建会静默挂起直到重新联网。
+      networkMode: 'always'
     }
   }
 })

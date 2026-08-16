@@ -10,8 +10,7 @@ describe('data consistency payloads', () => {
   })
 
   test('身体指标 patch 不覆盖未填写的另一个指标', () => {
-    expect(buildBodyMetricUpsert('u1', { date: '2026-08-06', weight: 65 })).toEqual({
-      user_id: 'u1',
+    expect(buildBodyMetricUpsert({ date: '2026-08-06', weight: 65 })).toEqual({
       date: '2026-08-06',
       weight: 65
     })

@@ -9,7 +9,7 @@ interface AuthState {
   session: Session | null
   userId: string | null
   loading: boolean
-  mode: 'online' | 'offline-readonly' | 'signed-out'
+  mode: 'online' | 'offline' | 'offline-readonly' | 'signed-out'
   canWrite: boolean
 }
 
@@ -111,13 +111,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [verifyOnlineSession])
 
   const userId = session?.user.id ?? offlineUserId
+  // 有 session（服务器确认过）才可写：纯离线只读（仅 lastUser 缓存）不能产生新写入。
   const mode: AuthState['mode'] = session
-    ? online ? 'online' : 'offline-readonly'
+    ? online ? 'online' : 'offline'
     : offlineUserId ? 'offline-readonly' : 'signed-out'
 
   return createElement(
     AuthContext.Provider,
-    { value: { session, userId, loading, mode, canWrite: Boolean(session && online) } },
+    { value: { session, userId, loading, mode, canWrite: Boolean(session) } },
     children
   )
 }

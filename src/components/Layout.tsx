@@ -14,6 +14,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Search,
+  Cloud,
   Target,
   TriangleAlert,
   Wallet,
@@ -34,16 +35,20 @@ import ToastHost from './ui/ToastHost'
 import GlobalSearch from './ui/GlobalSearch'
 import DataManager from './ui/DataManager'
 import QuickCaptureDialog from './ui/QuickCaptureDialog'
+import SyncCenter from './ui/SyncCenter'
+import SearchFocusBanner from './ui/SearchFocusBanner'
 import Modal from './ui/Modal'
 import { cancelAllPendingDeletes } from '../hooks/useDeferredDelete'
 import { useToastStore } from '../stores/toast'
 import { useOutboxSync } from '../hooks/useOutboxSync'
 import { useAuth } from '../hooks/useAuth'
 import { discardPendingOperations, pendingOperationCount } from '../lib/outbox'
+import { listCommands } from '../lib/commands'
 import { clearUserLocalData } from '../lib/localData'
 import { clearPomodoroRuntime } from '../utils/pomodoroRuntime'
 import { queryClient } from '../lib/queryClient'
 import { useQuickCaptureShortcut } from '../hooks/useQuickCaptureShortcut'
+import { useRecurrenceMaterialization } from '../hooks/useRecurrences'
 
 interface NavItem {
   to: string
@@ -70,6 +75,7 @@ const GROUPS = ['工作台', '记录']
 export default function Layout() {
   useAvatarStorageReconciliation()
   useOutboxSync()
+  useRecurrenceMaterialization()
   const online = useOnline()
   const drawerOpen = useUiStore((s) => s.drawerOpen)
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen)
@@ -78,6 +84,7 @@ export default function Layout() {
   const currentTitle = NAV.find((n) => n.to === location.pathname)?.label ?? '个人工作台'
   const [searchOpen, setSearchOpen] = useState(false)
   const [dataOpen, setDataOpen] = useState(false)
+  const [syncOpen, setSyncOpen] = useState(false)
 
   const { data: avatarRows } = useAvatars()
   const uploadAvatar = useUploadAvatar()
@@ -114,7 +121,11 @@ export default function Layout() {
   async function logout() {
     cancelAllPendingDeletes()
     if (userId) {
-      const pending = await pendingOperationCount(userId)
+      const [legacyPending, commandRows] = await Promise.all([
+        pendingOperationCount(userId),
+        listCommands(userId)
+      ])
+      const pending = legacyPending + commandRows.filter((command) => command.status !== 'resolved').length
       if (pending > 0 && !window.confirm(`还有 ${pending} 条操作尚未同步。退出将永久丢弃这些操作，确定继续吗？`)) return
       await discardPendingOperations(userId)
       clearPomodoroRuntime(localStorage, userId)
@@ -194,7 +205,7 @@ export default function Layout() {
       {!online && (
         <div className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-1.5 bg-m3/15 px-4 py-1.5 text-center text-xs font-medium text-m3">
           <WifiOff size={14} />
-          当前离线，仅可查看当前会话已加载数据，修改需联网
+          当前离线，修改会保存在本机并在联网后同步
         </div>
       )}
       {/* 未配置 Supabase 提示 */}
@@ -251,6 +262,13 @@ export default function Layout() {
           {!collapsed && (
             <>
               <button
+                onClick={() => setSyncOpen(true)}
+                className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+              >
+                <Cloud size={20} className="shrink-0" />
+                同步中心
+              </button>
+              <button
                 onClick={() => setSearchOpen(true)}
                 className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
               >
@@ -280,6 +298,9 @@ export default function Layout() {
               </IconButton>
               <IconButton onClick={() => setDataOpen(true)} aria-label="数据备份" title="数据备份">
                 <Database size={20} />
+              </IconButton>
+              <IconButton onClick={() => setSyncOpen(true)} aria-label="同步中心" title="同步中心">
+                <Cloud size={20} />
               </IconButton>
               <IconButton onClick={logout} aria-label="退出登录" title="退出登录">
                 <LogOut size={20} />
@@ -378,6 +399,16 @@ export default function Layout() {
             <button
               onClick={() => {
                 setDrawerOpen(false)
+                setSyncOpen(true)
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+            >
+              <Cloud size={20} className="shrink-0" />
+              同步中心
+            </button>
+            <button
+              onClick={() => {
+                setDrawerOpen(false)
                 setSearchOpen(true)
               }}
               className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
@@ -413,6 +444,7 @@ export default function Layout() {
         )}
       >
         <div className="mx-auto w-full max-w-5xl">
+          <SearchFocusBanner />
           <Outlet />
         </div>
       </main>
@@ -441,6 +473,7 @@ export default function Layout() {
       <ToastHost />
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
       <DataManager open={dataOpen} onClose={() => setDataOpen(false)} />
+      <SyncCenter open={syncOpen} onClose={() => setSyncOpen(false)} />
       <QuickCaptureDialog />
     </div>
   )

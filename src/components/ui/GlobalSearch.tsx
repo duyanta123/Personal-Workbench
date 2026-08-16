@@ -1,18 +1,41 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BookOpen, ListTodo, Search, Wallet, X } from 'lucide-react'
+import { BookOpen, Dumbbell, Inbox, ListTodo, Repeat2, Search, Target, Wallet, Wrench, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useGlobalSearch } from '../../hooks/useGlobalSearch'
+import type { SearchResultItem } from '../../types'
 import Input from './Input'
 import QueryError from './QueryError'
 import Modal from './Modal'
+import { formatMinor } from '../../utils/money'
 
 interface Group {
   title: string
-  to: string
   icon: LucideIcon
   cls: string
-  items: { id: string; text: string; sub?: string }[]
+  items: SearchResultItem[]
+}
+
+const GROUPS: Record<string, { title: string; icon: LucideIcon; cls: string }> = {
+  todo: { title: '待办', icon: ListTodo, cls: 'bg-m1/10 text-m1' },
+  habit: { title: '习惯', icon: Repeat2, cls: 'bg-m2/10 text-m2' },
+  ledger: { title: '记账', icon: Wallet, cls: 'bg-m3/10 text-m3' },
+  goal: { title: '目标', icon: Target, cls: 'bg-m4/10 text-m4' },
+  note: { title: '笔记', icon: BookOpen, cls: 'bg-m5/10 text-m5' },
+  practice: { title: '练习', icon: Wrench, cls: 'bg-m6/10 text-m6' },
+  workout: { title: '训练', icon: Dumbbell, cls: 'bg-m7/10 text-m7' },
+  inbox: { title: '收件箱', icon: Inbox, cls: 'bg-m8/10 text-m8' }
+}
+
+function normalizeResults(value: unknown): SearchResultItem[] {
+  if (Array.isArray(value)) return value as SearchResultItem[]
+  if (!value || typeof value !== 'object') return []
+  const legacy = value as { todos?: Array<{ id: string; text: string; done?: boolean }>; notes?: Array<{ id: string; title?: string | null; body: string }>; ledger?: Array<{ id: string; category: string; kind: string; amount: number; note?: string | null }> }
+  return [
+    ...(legacy.todos ?? []).map((item) => ({ kind: 'todo' as const, id: item.id, title: item.text, subtitle: item.done ? '已完成' : null, route: `/todos?focus=${encodeURIComponent(item.id)}`, matchField: 'text', updatedAt: '' })),
+    ...(legacy.notes ?? []).map((item) => ({ kind: 'note' as const, id: item.id, title: item.title ?? '无标题', subtitle: item.body.slice(0, 40), route: `/notes?focus=${encodeURIComponent(item.id)}`, matchField: 'title', updatedAt: '' })),
+    ...(legacy.ledger ?? []).map((item) => ({ kind: 'ledger' as const, id: item.id, title: item.category, subtitle: `${item.kind === 'expense' ? '-' : '+'}${formatMinor(Math.round(item.amount * 100))}${item.note ? ` · ${item.note}` : ''}`, route: `/ledger?focus=${encodeURIComponent(item.id)}`, matchField: 'category', updatedAt: '', }))
+  ]
 }
 
 /** 跨模块全局搜索（待办 / 笔记 / 记账） */
@@ -27,41 +50,16 @@ export default function GlobalSearch({ open, onClose }: { open: boolean; onClose
   }, [open])
 
   const groups = useMemo<Group[]>(() => {
-    const r = searchQuery.data ?? { todos: [], notes: [], ledger: [] }
-    return [
-      {
-        title: '待办',
-        to: '/todos',
-        icon: ListTodo,
-        cls: 'bg-m1/10 text-m1',
-        items: r.todos.map((t) => ({ id: t.id, text: t.text, sub: t.done ? '已完成' : undefined }))
-      },
-      {
-        title: '内容记录',
-        to: '/notes',
-        icon: BookOpen,
-        cls: 'bg-m5/10 text-m5',
-        items: r.notes.map((n) => ({ id: n.id, text: n.title ?? '无标题', sub: n.body.slice(0, 40) }))
-      },
-      {
-        title: '记账',
-        to: '/ledger',
-        icon: Wallet,
-        cls: 'bg-m3/10 text-m3',
-        items: r.ledger.map((e) => ({
-          id: e.id,
-          text: e.category,
-          sub: `${e.kind === 'expense' ? '-' : '+'}¥${e.amount.toFixed(2)}${e.note ? ` · ${e.note}` : ''}`
-        }))
-      }
-    ]
+    const grouped = new Map<string, SearchResultItem[]>()
+    for (const item of normalizeResults(searchQuery.data)) grouped.set(item.kind, [...(grouped.get(item.kind) ?? []), item])
+    return Object.entries(GROUPS).map(([kind, meta]) => ({ ...meta, items: grouped.get(kind) ?? [] })).filter((group) => group.items.length > 0)
   }, [searchQuery.data])
 
   const total = groups.reduce((s, g) => s + g.items.length, 0)
 
-  function go(to: string, id: string) {
+  function go(route: string) {
     onClose()
-    navigate(`${to}?focus=${encodeURIComponent(id)}`)
+    navigate(route)
   }
 
   return (
@@ -99,15 +97,15 @@ export default function GlobalSearch({ open, onClose }: { open: boolean; onClose
                     {g.items.slice(0, 6).map((it) => (
                       <button
                         key={it.id}
-                        onClick={() => go(g.to, it.id)}
+                        onClick={() => go(it.route)}
                         className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors hover:bg-hover"
                       >
                         <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${g.cls}`}>
                           <g.icon size={14} />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm text-ink">{it.text}</span>
-                          {it.sub && <span className="block truncate text-xs text-ink-3">{it.sub}</span>}
+                          <span className="block truncate text-sm text-ink">{it.title}</span>
+                          {it.subtitle && <span className="block truncate text-xs text-ink-3">{it.subtitle}</span>}
                         </span>
                       </button>
                     ))}

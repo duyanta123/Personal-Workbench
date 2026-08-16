@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { enqueueOperation } from '../lib/outbox'
+import { createEntity, deleteEntity, updateEntity } from '../lib/domainCommands'
 import type { Note, NoteLayout } from '../types'
 import { useAuth } from './useAuth'
 import { localDayRange } from '../utils/localDayRange'
@@ -139,7 +139,7 @@ export function useAddNote() {
       image_url?: string | null
     }) => {
       if (!userId) throw new Error('未登录')
-      return enqueueOperation<Note>(userId, 'note.create', validateNoteCreate(input))
+      return createEntity(qc, userId, 'note', validateNoteCreate(input))
     },
     onSuccess: () => linkedNoteKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -166,8 +166,8 @@ export function useUpdateNote() {
       if (patch.title) requireLength(patch.title, LIMITS.title, '标题')
       validateTags(patch.tags)
       safeExternalUrl(patch.image_url)
-      const { error } = await supabase!.from('notes').update(patch).eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return updateEntity(qc, userId, 'note', id, patch)
     },
     onSuccess: () => linkedNoteKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -179,8 +179,8 @@ export function useTogglePin() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async ({ id, pinned }: { id: string; pinned: boolean }) => {
-      const { error } = await supabase!.from('notes').update({ pinned }).eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return updateEntity(qc, userId, 'note', id, { pinned })
     },
     onSuccess: () => linkedNoteKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -191,8 +191,8 @@ export function useDeleteNote() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase!.from('notes').delete().eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return deleteEntity(qc, userId, 'note', id)
     },
     onSuccess: () => linkedNoteKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })

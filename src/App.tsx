@@ -15,6 +15,7 @@ const Notes = lazy(() => import('./pages/Notes'))
 const Practice = lazy(() => import('./pages/Practice'))
 const Workout = lazy(() => import('./pages/Workout'))
 const Insight = lazy(() => import('./pages/Insight'))
+const ShareTarget = lazy(() => import('./pages/ShareTarget'))
 
 function RouteFallback() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/login" element={<AuthPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/update-password" element={<UpdatePasswordPage />} />
+        <Route path="/share" element={<ShareTarget />} />
         <Route element={<ProtectedRoute />}>
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />

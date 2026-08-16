@@ -38,6 +38,7 @@ import { useAuth } from '../hooks/useAuth'
 import QueryError from '../components/ui/QueryError'
 import { useCurrentDate } from '../hooks/useCurrentDate'
 import { useClampPage } from '../hooks/useClampPage'
+import EntityTemplatePanel from '../components/ui/EntityTemplatePanel'
 
 const BODY_PARTS = [
   { value: 'chest', label: '胸' },
@@ -302,6 +303,17 @@ export default function Workout() {
       {(sessionsQuery.isError || exercisesQuery.isError || metricsQuery.isError || statsQuery.isError) && (
         <QueryError onRetry={() => { sessionsQuery.refetch(); exercisesQuery.refetch(); metricsQuery.refetch(); statsQuery.refetch() }} />
       )}
+
+      <EntityTemplatePanel
+        kind="workout"
+        canSave={Boolean(sForm.body_part)}
+        draft={{ body_part: sForm.body_part, duration_min: sForm.duration === '' ? null : Number(sForm.duration), note: sForm.note.trim() || null }}
+        instantiate={(payload) => addSession.mutateAsync({
+          date: today, body_part: String(payload.body_part ?? 'full'),
+          duration_min: payload.duration_min == null ? null : Number(payload.duration_min),
+          note: typeof payload.note === 'string' ? payload.note : null
+        })}
+      />
 
       {/* 本周概览 */}
       <div className="grid grid-cols-3 gap-3">

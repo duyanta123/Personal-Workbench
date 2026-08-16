@@ -13,7 +13,18 @@ export const BACKUP_TABLES = [
   'workout_exercises',
   'body_metrics',
   'pomodoro_sessions',
-  'user_preferences'
+  'user_preferences',
+  'inbox_items',
+  'recurrence_rules',
+  'ledger_accounts',
+  'ledger_payees',
+  'ledger_rules',
+  'ledger_splits',
+  'ledger_reconciliations',
+  'entity_links',
+  'workbench_templates',
+  'saved_views',
+  'todo_status_history'
 ] as const
 
 export type BackupTable = (typeof BACKUP_TABLES)[number]
@@ -25,16 +36,21 @@ export interface BackupAvatar {
   created_at: string
 }
 
-export interface BackupV3 {
-  metadata: { version: 3; exported_at: string; source_revision: number; source_version?: 1 | 2 | 3 }
+export type BackupSourceVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7
+
+export interface BackupV7 {
+  metadata: { version: 7; exported_at: string; source_revision: number; source_version?: BackupSourceVersion }
   tables: Record<BackupTable, Record<string, unknown>[]>
   avatars: BackupAvatar[]
 }
 
+/** @deprecated Compatibility alias. New exports use Backup V7. */
+export type BackupV3 = BackupV7
+
 /** Kept as an input-only compatibility shape for callers/tests using V2. */
 export interface BackupV2 {
   metadata: { version: 2; exported_at: string }
-  tables: BackupV3['tables']
+  tables: BackupV7['tables']
   avatars: BackupAvatar[]
 }
 
@@ -97,8 +113,20 @@ function validPomodoro(value: unknown) {
 
 function withSafeDefaults(table: BackupTable, row: Record<string, unknown>) {
   switch (table) {
-    case 'todos': return { level: 'mid', done: false, pinned: false, sort_order: 0, ...row }
-    case 'habits': return { emoji: 'flame', pinned: false, ...row }
+    case 'todos': {
+      const done = row.done === true
+      return { level: 'mid', done, status: done ? 'done' : 'open', pinned: false, sort_order: 0, recurrence_detached: false, ...row }
+    }
+    case 'habits': return {
+      emoji: 'flame', pinned: false, tracking_type: 'boolean', period_days: 1,
+      target_count: 1, target_value: null, target_mode: 'at_least', reminder_time: null, ...row
+    }
+    case 'habit_logs': return { state: 'done', value: null, ...row }
+    case 'ledger_entries': {
+      const amount = isFiniteNumber(row.amount) ? row.amount : Number(row.amount)
+      const amountMinor = isFiniteNumber(row.amount_minor) ? row.amount_minor : Math.round(amount * 100)
+      return { amount, amount_minor: amountMinor, currency_code: 'CNY', status: 'posted', ...row }
+    }
     case 'goals': return { current: 0, target: 1, pinned: false, ...row }
     case 'notes': return { title: null, tags: [], pinned: false, layout: 'default', image_url: null, ...row }
     case 'practice_problems': return { platform: 'leetcode', difficulty: 'medium', status: 'todo', tags: [], ...row }
@@ -107,9 +135,21 @@ function withSafeDefaults(table: BackupTable, row: Record<string, unknown>) {
     case 'user_preferences': return {
       categories: { expense: [], income: [] },
       monthly_budget: null,
+      monthly_budget_minor: row.monthly_budget == null ? null : Math.round(Number(row.monthly_budget) * 100),
+      currency_code: 'CNY',
       pomodoro: { focus: 25, break: 5, long_break: 15, rounds_per_cycle: 4 },
       ...row
     }
+    case 'inbox_items': return { source: 'manual', parsed_candidates: [], status: 'pending', ...row }
+    case 'recurrence_rules': return {
+      interval_count: 1, weekdays: [], timezone: 'Asia/Shanghai', enabled: true,
+      generation_mode: 'manual', template: {}, skipped_before_window: 0, ...row
+    }
+    case 'ledger_accounts': return { type: 'cash', opening_balance_minor: 0, archived: false, ...row }
+    case 'ledger_rules': return { stage: 'default', sort_order: 0, enabled: true, conditions: {}, actions: {}, ...row }
+    case 'workbench_templates': return { payload: {}, ...row }
+    case 'saved_views': return { filters: {}, sort: [], is_default: false, ...row }
+    case 'todo_status_history': return row
     default: return row
   }
 }
@@ -122,14 +162,21 @@ function validRow(table: BackupTable, row: Record<string, unknown>): boolean {
   const id = typeof row.id === 'string' && row.id.length > 0
   switch (table) {
     case 'todos':
-      return id && validText(row.text, LIMITS.title, 1) && optional(row.level, (value) => ['high', 'mid', 'low'].includes(String(value))) && optional(row.done, (value) => typeof value === 'boolean')
+      return id && validText(row.text, LIMITS.title, 1) && optional(row.level, (value) => ['high', 'mid', 'low'].includes(String(value)))
+        && optional(row.done, (value) => typeof value === 'boolean') && optional(row.status, (value) => ['open', 'done', 'skipped'].includes(String(value)))
     case 'habits':
       return id && validText(row.name, LIMITS.short, 1) && optional(row.emoji, (value) => validText(value, LIMITS.short, 1))
+        && ['boolean', 'numeric'].includes(String(row.tracking_type)) && isNonNegativeInteger(row.period_days)
+        && Number(row.period_days) >= 1 && isNonNegativeInteger(row.target_count) && Number(row.target_count) >= 1
+        && ['at_least', 'at_most'].includes(String(row.target_mode))
     case 'habit_logs':
       return id && typeof row.habit_id === 'string' && typeof row.log_date === 'string'
+        && ['done', 'skipped'].includes(String(row.state)) && optional(row.value, isFiniteNumber)
     case 'ledger_entries':
       return id && (row.kind === 'income' || row.kind === 'expense') && validText(row.category, LIMITS.short, 1)
-        && isNonNegative(row.amount) && Number(row.amount) <= 9999999999.99 && typeof row.entry_date === 'string'
+        && isNonNegative(row.amount) && Number(row.amount) <= 9999999999.99
+        && isNonNegativeInteger(row.amount_minor) && ['CNY', 'USD', 'EUR', 'HKD', 'GBP'].includes(String(row.currency_code))
+        && ['planned', 'posted'].includes(String(row.status)) && typeof row.entry_date === 'string'
         && optional(row.note, (value) => validText(value, LIMITS.body))
     case 'goals':
       return id && validText(row.name, LIMITS.short, 1) && isNonNegative(row.current) && isFiniteNumber(row.target)
@@ -164,10 +211,46 @@ function validRow(table: BackupTable, row: Record<string, unknown>): boolean {
     case 'user_preferences':
       return typeof row.user_id === 'string' && validCategories(row.categories) && validPomodoro(row.pomodoro)
         && optional(row.monthly_budget, (value) => isFiniteNumber(value) && value > 0 && Number(value) <= 9999999999.99)
+        && optional(row.monthly_budget_minor, (value) => isNonNegativeInteger(value))
+        && ['CNY', 'USD', 'EUR', 'HKD', 'GBP'].includes(String(row.currency_code))
+    case 'inbox_items':
+      return id && validText(row.raw_text, 100000, 1) && ['quick_capture', 'share_target', 'manual'].includes(String(row.source))
+        && Array.isArray(row.parsed_candidates) && ['pending', 'routed', 'archived'].includes(String(row.status))
+    case 'recurrence_rules':
+      return id && ['todo', 'ledger'].includes(String(row.entity_type))
+        && ['daily', 'weekly', 'monthly', 'yearly'].includes(String(row.frequency))
+        && isNonNegativeInteger(row.interval_count) && Number(row.interval_count) >= 1
+        && Array.isArray(row.weekdays) && row.weekdays.every((day) => Number.isInteger(day) && Number(day) >= 0 && Number(day) <= 6)
+        && typeof row.start_date === 'string' && validText(row.timezone, 100, 1)
+        && ['manual', 'automatic'].includes(String(row.generation_mode)) && isRecord(row.template)
+    case 'ledger_accounts':
+      return id && validText(row.name, LIMITS.short, 1) && ['cash', 'bank', 'credit', 'asset', 'liability'].includes(String(row.type))
+        && Number.isSafeInteger(Number(row.opening_balance_minor)) && typeof row.archived === 'boolean'
+    case 'ledger_payees': return id && validText(row.name, LIMITS.short, 1)
+    case 'ledger_rules':
+      return id && validText(row.name, LIMITS.short, 1) && ['pre', 'default', 'post'].includes(String(row.stage))
+        && Number.isSafeInteger(Number(row.sort_order)) && typeof row.enabled === 'boolean' && isRecord(row.conditions) && isRecord(row.actions)
+    case 'ledger_splits':
+      return id && typeof row.ledger_entry_id === 'string' && validText(row.category, LIMITS.short, 1)
+        && isNonNegativeInteger(row.amount_minor) && Number(row.amount_minor) > 0 && optional(row.note, (value) => validText(value, LIMITS.body))
+    case 'ledger_reconciliations':
+      return id && typeof row.account_id === 'string' && typeof row.statement_date === 'string' && Number.isSafeInteger(Number(row.balance_minor))
+    case 'entity_links':
+      return id && ['todo', 'habit', 'ledger', 'goal', 'note', 'practice', 'workout'].includes(String(row.source_kind))
+        && typeof row.source_id === 'string' && ['todo', 'habit', 'ledger', 'goal', 'note', 'practice', 'workout'].includes(String(row.target_kind))
+        && typeof row.target_id === 'string' && !(row.source_kind === row.target_kind && row.source_id === row.target_id)
+    case 'workbench_templates':
+      return id && ['todo', 'habit', 'goal', 'workout'].includes(String(row.kind)) && validText(row.name, LIMITS.short, 1) && isRecord(row.payload)
+    case 'saved_views':
+      return id && ['todo', 'ledger'].includes(String(row.entity_kind)) && validText(row.name, LIMITS.short, 1)
+        && isRecord(row.filters) && Array.isArray(row.sort) && typeof row.is_default === 'boolean'
+    case 'todo_status_history':
+      return id && typeof row.todo_id === 'string' && ['done', 'skipped', 'reopened', 'postponed'].includes(String(row.action))
+        && optional(row.from_value, (value) => validText(value, 40)) && optional(row.to_value, (value) => validText(value, 40))
   }
 }
 
-function validateTables(tables: BackupV3['tables']) {
+function validateTables(tables: BackupV7['tables']) {
   let totalRows = 0
   for (const table of BACKUP_TABLES) {
     if (tables[table].length > MAX_BACKUP_TABLE_ROWS) throw new Error(`${table} 数据超过 50,000 行`)
@@ -188,23 +271,66 @@ function validateTables(tables: BackupV3['tables']) {
   uniqueBy('pomodoro_sessions', 'date', '番茄统计包含重复日期')
   const logKeys = tables.habit_logs.map((row) => `${String(row.habit_id)}:${String(row.log_date)}`)
   if (new Set(logKeys).size !== logKeys.length) throw new Error('习惯打卡包含重复日期')
+
+  const tableIds = (table: BackupTable) => new Set(tables[table].map((row) => row.id).filter((id): id is string => typeof id === 'string'))
+  const ledgerIds = tableIds('ledger_entries')
+  const accountIds = tableIds('ledger_accounts')
+  const payeeIds = tableIds('ledger_payees')
+  const recurrenceIds = tableIds('recurrence_rules')
+  if (tables.ledger_splits.some((row) => !ledgerIds.has(String(row.ledger_entry_id)))) {
+    throw new Error('拆分项引用了不存在的账目')
+  }
+  if (tables.ledger_reconciliations.some((row) => !accountIds.has(String(row.account_id)))) {
+    throw new Error('对账批次引用了不存在的账户')
+  }
+  if (tables.todos.some((row) => row.recurrence_rule_id != null && !recurrenceIds.has(String(row.recurrence_rule_id)))) {
+    throw new Error('待办引用了不存在的周期规则')
+  }
+  const todoIds = tableIds('todos')
+  if (tables.todo_status_history.some((row) => !todoIds.has(String(row.todo_id)))) {
+    throw new Error('状态历史引用了不存在的待办')
+  }
+  if (tables.ledger_entries.some((row) =>
+    (row.account_id != null && !accountIds.has(String(row.account_id)))
+    || (row.payee_id != null && !payeeIds.has(String(row.payee_id)))
+    || (row.recurrence_rule_id != null && !recurrenceIds.has(String(row.recurrence_rule_id))))) {
+    throw new Error('账目引用了不存在的账户、收付款方或周期规则')
+  }
+  const entityIds: Record<string, Set<string>> = {
+    todo: tableIds('todos'), habit: tableIds('habits'), ledger: ledgerIds, goal: tableIds('goals'),
+    note: tableIds('notes'), practice: tableIds('practice_problems'), workout: tableIds('workout_sessions')
+  }
+  if (tables.entity_links.some((row) => !entityIds[String(row.source_kind)]?.has(String(row.source_id))
+    || !entityIds[String(row.target_kind)]?.has(String(row.target_id)))) {
+    throw new Error('实体关联引用了不存在的数据')
+  }
 }
 
-export function normalizeBackup(value: unknown): BackupV3 {
+export function normalizeBackup(value: unknown): BackupV7 {
   if (!isRecord(value)) throw new Error('备份文件不是有效对象')
   if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_BACKUP_BYTES) {
     throw new Error('备份文件不能超过 40 MiB')
   }
   const metadata = isRecord(value.metadata) ? value.metadata : null
   const version = metadata?.version ?? 1
-  if (![1, 2, 3].includes(Number(version))) throw new Error(`不支持的备份版本：${String(version)}`)
+  if (![1, 2, 3, 4, 5, 6, 7].includes(Number(version))) throw new Error(`不支持的备份版本：${String(version)}`)
   const versioned = Number(version) >= 2
   if (versioned && !isRecord(value.tables)) throw new Error(`BackupV${version} 缺少 tables 对象`)
   const source = versioned ? (value.tables as Record<string, unknown>) : value
   const tables = Object.fromEntries(BACKUP_TABLES.map((name) => [
     name,
     rows(source[name], name).map((row) => withSafeDefaults(name, row))
-  ])) as BackupV3['tables']
+  ])) as BackupV7['tables']
+  if (Number(version) < 6 && tables.ledger_entries.length > 0 && tables.ledger_accounts.length === 0) {
+    const accountId = crypto.randomUUID()
+    tables.ledger_accounts.push(withSafeDefaults('ledger_accounts', {
+      id: accountId,
+      name: '默认账户',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }))
+    tables.ledger_entries = tables.ledger_entries.map((row) => ({ ...row, account_id: accountId }))
+  }
   const avatars = versioned ? rows(value.avatars, 'avatars').map((avatar) => {
     const mime = avatar.mime_type
     const data = avatar.data_base64
@@ -246,14 +372,14 @@ export function normalizeBackup(value: unknown): BackupV3 {
 
   return {
     metadata: {
-      version: 3,
+      version: 7,
       exported_at: versioned && typeof metadata?.exported_at === 'string'
         ? metadata.exported_at
         : new Date().toISOString(),
       source_revision: Number.isSafeInteger(Number(metadata?.source_revision)) && Number(metadata?.source_revision) >= 0
         ? Number(metadata?.source_revision)
         : 0,
-      source_version: Number(version) as 1 | 2 | 3
+      source_version: Number(version) as BackupSourceVersion
     },
     tables,
     avatars
@@ -305,7 +431,7 @@ export function base64ToBlob(data: string, mime: string): Blob {
   return new Blob([bytes], { type: mime })
 }
 
-export async function createBackupV3(): Promise<BackupV3> {
+export async function createBackupV7(): Promise<BackupV7> {
   const readSyncState = async () => {
     const { data, error } = await supabase!.rpc('get_user_sync_state')
     if (error) throw error
@@ -322,7 +448,7 @@ export async function createBackupV3(): Promise<BackupV3> {
   const tables = Object.fromEntries(await Promise.all(BACKUP_TABLES.map(async (name) => [
     name,
     await fetchAllTableRows<Record<string, unknown>>(name)
-  ]))) as BackupV3['tables']
+  ]))) as BackupV7['tables']
   const { data: avatarData, error: avatarError } = await supabase!
     .from('user_avatars')
     .select('storage_path,is_active,created_at')
@@ -351,7 +477,7 @@ export async function createBackupV3(): Promise<BackupV3> {
   }
   const backup = {
     metadata: {
-      version: 3 as const,
+      version: 7 as const,
       exported_at: new Date().toISOString(),
       source_revision: started.revision
     },
@@ -361,10 +487,12 @@ export async function createBackupV3(): Promise<BackupV3> {
   return normalizeBackup(backup)
 }
 
-/** @deprecated Use createBackupV3. */
-export const createBackupV2 = createBackupV3
+/** @deprecated Use createBackupV7. */
+export const createBackupV3 = createBackupV7
+/** @deprecated Use createBackupV7. */
+export const createBackupV2 = createBackupV7
 
-export function backupCounts(backup: BackupV3): Record<string, number> {
+export function backupCounts(backup: BackupV7): Record<string, number> {
   return {
     ...Object.fromEntries(BACKUP_TABLES.map((table) => [table, backup.tables[table].length])),
     avatars: backup.avatars.length

@@ -25,7 +25,10 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       VITE_SUPABASE_URL: 'http://127.0.0.1:54321',
-      VITE_SUPABASE_ANON_KEY: 'e2e-anon-key'
+      VITE_SUPABASE_ANON_KEY: 'e2e-anon-key',
+      // E2E 需要禁用 HMR：Playwright setOffline 模拟会切断 HMR websocket，
+      // vite 客户端的重连/整页刷新会破坏离线投影与 IndexedDB 状态的断言。
+      E2E: '1'
     }
   }
 })

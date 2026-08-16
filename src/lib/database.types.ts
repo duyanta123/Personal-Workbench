@@ -1,3 +1,10 @@
+/**
+ * 手写领域类型视图：以 src/types.ts 的业务模型为基础组装 Supabase Database 结构。
+ * 权威 schema 见 supabase/generated/database.types.ts（由 `supabase gen types typescript
+ * --local --schema public` 生成；CI 中的 "Fail on database type drift" 步骤在基线提交后
+ * 保证其与迁移不漂移，基线未提交时该步骤仅告警并上传 artifact 供一次性提交）。
+ * 修改数据库迁移后请重新生成该文件，并同步维护此处的手写映射。
+ */
 import type {
   BodyMetric,
   Goal,
@@ -43,6 +50,16 @@ export interface Database {
       pomodoro_sessions: Table<PomodoroSession>
       user_preferences: Table<UserPreferences>
       user_avatars: Table<UserAvatar>
+      inbox_items: Table<import('../types').InboxItem>
+      recurrence_rules: Table<import('../types').RecurrenceRule>
+      ledger_accounts: Table<import('../types').LedgerAccount>
+      ledger_payees: Table<import('../types').LedgerPayee>
+      ledger_rules: Table<import('../types').LedgerRule>
+      ledger_splits: Table<import('../types').LedgerSplit>
+      ledger_reconciliations: Table<import('../types').LedgerReconciliation>
+      entity_links: Table<import('../types').EntityLink>
+      workbench_templates: Table<import('../types').WorkbenchTemplate>
+      saved_views: Table<import('../types').SavedView>
     }
     Views: Record<string, never>
     Functions: {
@@ -52,9 +69,11 @@ export interface Database {
       delete_avatar: Rpc<{ p_avatar_id: string }, string | null>
       finalize_restore: Rpc<{ p_restore_id: string; p_avatar_paths?: Json }>
       get_dashboard_summary: Rpc<{ p_date: string; p_month: string }>
+      get_dashboard_summary_v2: Rpc<{ p_date: string; p_month: string }>
       get_focus_items: Rpc<{ p_date: string; p_limit: number }>
       get_habit_stats: Rpc<{ p_date: string }>
       get_ledger_summary: Rpc<{ p_month: string }>
+      get_workbench_insights_v2: Rpc<{ p_date: string; p_month: string }>
       get_note_stats_range: Rpc<{ p_start: string; p_end: string }>
       get_practice_page: Rpc<{ p_page: number; p_page_size: number; p_query: string; p_platform: string | null; p_difficulty: string | null; p_tag: string | null }>
       get_practice_page_cursor: Rpc<{
@@ -79,6 +98,19 @@ export interface Database {
       set_active_avatar: Rpc<{ p_avatar_id: string }>
       set_habit_log: Rpc<{ p_habit_id: string; p_log_date: string; p_done: boolean }>
       stage_restore_chunk: Rpc<{ p_restore_id: string; p_table: string; p_chunk_index: number; p_rows: Json }, null>
+      apply_workbench_command_v2: Rpc<{
+        p_command_id: string; p_entity_id: string; p_restore_epoch: number; p_kind: string; p_payload: Json;
+        p_expected: Json; p_base_version: number | null; p_depends_on: string[]
+      }>
+      get_today_workspace: Rpc<{ p_date: string; p_timezone?: string }>
+      materialize_recurrences: Rpc<{ p_today: string; p_timezone?: string }>
+      move_todo_v2: Rpc<{ p_command_id: string; p_restore_epoch: number; p_todo_id: string; p_base_version: number; p_anchor_id: string; p_position: string }>
+      route_inbox_item: Rpc<{ p_command_id: string; p_item_id: string; p_kind: string; p_payload: Json; p_target_id: string }>
+      search_workbench_v2: Rpc<{ p_query: string; p_limit?: number }>
+      create_ledger_transaction: Rpc<{ p_command_id: string; p_restore_epoch: number; p_entry_id: string; p_entry: Json; p_splits?: Json }>
+      reconcile_ledger_account: Rpc<{ p_command_id: string; p_restore_epoch: number; p_reconciliation_id: string; p_account_id: string; p_statement_date: string; p_balance_minor: number; p_entry_ids: string[] }>
+      switch_ledger_currency: Rpc<{ p_command_id: string; p_restore_epoch: number; p_currency: string }>
+      suggest_ledger_recurrences: Rpc<{ p_today: string }>
     }
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>

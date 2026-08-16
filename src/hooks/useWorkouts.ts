@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { enqueueOperation } from '../lib/outbox'
+import { createEntity, deleteEntity, updateEntity } from '../lib/domainCommands'
 import type { BodyMetric, WorkoutExercise, WorkoutSession } from '../types'
 import { useAuth } from './useAuth'
 import { buildBodyMetricUpsert } from '../utils/dataConsistency'
 import type { BodyMetricPatch } from '../utils/dataConsistency'
 import { rpcArray, rpcNumber, rpcRecord } from '../lib/rpcSchemas'
 import { afterCursor, cursorScope, cursorToken, getPageCursor, rememberPageCursor } from '../lib/cursorPagination'
+import { listCommands } from '../lib/commands'
 
 export const workoutsKey = (userId: string | null) => ['workouts', userId] as const
 export const exercisesKey = (userId: string | null) => ['workout-exercises', userId] as const
@@ -85,7 +86,7 @@ export function useAddWorkoutSession() {
   return useMutation({
     mutationFn: async (input: NewWorkoutSession) => {
       if (!userId) throw new Error('未登录')
-      return enqueueOperation<WorkoutSession>(userId, 'workout_session.create', { ...input })
+      return createEntity(qc, userId, 'workout_session', { ...input })
     },
     onSuccess: () => invalidateWorkout(qc, userId)
   })
@@ -96,8 +97,8 @@ export function useDeleteWorkoutSession() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase!.from('workout_sessions').delete().eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return deleteEntity(qc, userId, 'workout_session', id)
     },
     onSuccess: () => invalidateWorkout(qc, userId)
   })
@@ -137,7 +138,12 @@ export function useAddWorkoutExercise() {
   return useMutation({
     mutationFn: async (input: NewWorkoutExercise) => {
       if (!userId) throw new Error('未登录')
-      return enqueueOperation<WorkoutExercise>(userId, 'workout_exercise.create', { ...input })
+      const parent = (await listCommands(userId)).find((command) =>
+        command.entityId === input.session_id && command.kind === 'workout_session.create'
+          && ['pending', 'syncing', 'failed'].includes(command.status))
+      return createEntity(qc, userId, 'workout_exercise', { ...input }, {
+        dependsOnCommandIds: parent ? [parent.commandId] : []
+      })
     },
     onSuccess: () => invalidateWorkout(qc, userId)
   })
@@ -148,8 +154,8 @@ export function useDeleteWorkoutExercise() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase!.from('workout_exercises').delete().eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return deleteEntity(qc, userId, 'workout_exercise', id)
     },
     onSuccess: () => invalidateWorkout(qc, userId)
   })
@@ -217,14 +223,11 @@ export function useUpsertBodyMetric() {
   return useMutation({
     mutationFn: async (input: BodyMetricPatch) => {
       if (!userId) throw new Error('未登录')
-      const payload = buildBodyMetricUpsert(userId, input)
-      const { data, error } = await supabase!
-        .from('body_metrics')
-        .upsert(payload, { onConflict: 'user_id,date' })
-        .select()
-        .single()
-      if (error) throw error
-      return data as BodyMetric
+      const payload = buildBodyMetricUpsert(input)
+      const existing = qc.getQueryData<BodyMetric[]>(metricsKey(userId))?.find((row) => row.date === input.date)
+      return existing
+        ? updateEntity(qc, userId, 'body_metric', existing.id, payload)
+        : createEntity(qc, userId, 'body_metric', payload)
     },
     onSuccess: () => invalidateWorkout(qc, userId)
   })
@@ -235,8 +238,8 @@ export function useUpdateWorkoutSession() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<NewWorkoutSession> }) => {
-      const { error } = await supabase!.from('workout_sessions').update(patch).eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return updateEntity(qc, userId, 'workout_session', id, patch)
     },
     onSuccess: () => invalidateWorkout(qc, userId)
   })
@@ -247,8 +250,8 @@ export function useUpdateWorkoutExercise() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<Omit<NewWorkoutExercise, 'session_id'>> }) => {
-      const { error } = await supabase!.from('workout_exercises').update(patch).eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return updateEntity(qc, userId, 'workout_exercise', id, patch)
     },
     onSuccess: () => invalidateWorkout(qc, userId)
   })
@@ -259,8 +262,8 @@ export function useDeleteBodyMetric() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase!.from('body_metrics').delete().eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return deleteEntity(qc, userId, 'body_metric', id)
     },
     onSuccess: () => invalidateWorkout(qc, userId)
   })

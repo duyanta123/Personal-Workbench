@@ -1,20 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import type { LedgerEntry, Note, Todo } from '../types'
+import type { SearchResultItem } from '../types'
 import { useAuth } from './useAuth'
 
-export interface GlobalSearchResult {
-  todos: Todo[]
-  notes: Note[]
-  ledger: LedgerEntry[]
-}
+const EMPTY_RESULT: SearchResultItem[] = []
 
-const EMPTY_RESULT: GlobalSearchResult = { todos: [], notes: [], ledger: [] }
-
-function isSearchResult(value: unknown): value is GlobalSearchResult {
-  if (!value || typeof value !== 'object') return false
-  const result = value as Record<string, unknown>
-  return Array.isArray(result.todos) && Array.isArray(result.notes) && Array.isArray(result.ledger)
+function isSearchResult(value: unknown): value is SearchResultItem[] {
+  return Array.isArray(value) && value.every((item) => {
+    if (!item || typeof item !== 'object') return false
+    const result = item as Record<string, unknown>
+    return typeof result.kind === 'string' && typeof result.id === 'string' && typeof result.title === 'string'
+  })
 }
 
 export function useGlobalSearch(query: string, enabled: boolean) {
@@ -23,7 +19,7 @@ export function useGlobalSearch(query: string, enabled: boolean) {
   return useQuery({
     queryKey: ['global_search', userId, normalized.toLowerCase()] as const,
     queryFn: async () => {
-      const { data, error } = await supabase!.rpc('search_workbench', {
+      const { data, error } = await supabase!.rpc('search_workbench_v2', {
         p_query: normalized,
         p_limit: 6
       })

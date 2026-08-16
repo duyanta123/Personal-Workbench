@@ -1,69 +1,15 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
+import { e2eToken, e2eUser, loginWorkbench, mockWorkbench } from './mocks'
 
-const user = {
-  id: '10000000-0000-0000-0000-000000000001',
-  aud: 'authenticated',
-  role: 'authenticated',
-  email: 'invitee@example.test',
-  app_metadata: { provider: 'email', providers: ['email'] },
-  user_metadata: {},
-  created_at: '2026-08-10T00:00:00.000Z'
-}
-
-function token() {
-  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
-  return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({
-    aud: 'authenticated',
-    exp: Math.floor(Date.now() / 1000) + 3600,
-    sub: user.id,
-    email: user.email,
-    role: 'authenticated',
-    app_metadata: user.app_metadata,
-    user_metadata: user.user_metadata
-  })}.e2e-signature`
-}
-
-async function mockAuthenticatedWorkbench(page: import('@playwright/test').Page, operations: string[] = []) {
-  await page.route('**/auth/v1/user', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ user }) })
+async function mockAuthenticatedWorkbench(page: Page, operations: string[] = []) {
+  await mockWorkbench(page)
+  // 后注册的路由优先生效：单独记录 V1 operation 供断言。
+  await page.route('**/rest/v1/rpc/apply_workbench_operation', async (route) => {
+    const payload = JSON.parse(route.request().postData() ?? '{}') as { p_kind?: string }
+    operations.push(String(payload.p_kind ?? ''))
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'created-1' }) })
   })
-  await page.route('**/auth/v1/token**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ access_token: token(), refresh_token: 'refresh-token', expires_in: 3600, token_type: 'bearer', user })
-    })
-  })
-  await page.route('**/rest/v1/**', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'content-range': '0-0/0' }, body: '[]' })
-  })
-  // Playwright resolves the most recently registered matching route first.
-  await page.route('**/rest/v1/rpc/**', async (route) => {
-    const name = new URL(route.request().url()).pathname.split('/').at(-1)
-    if (name === 'apply_workbench_operation') {
-      const payload = JSON.parse(route.request().postData() ?? '{}') as { p_kind?: string }
-      operations.push(String(payload.p_kind ?? ''))
-    }
-    const payloads: Record<string, unknown> = {
-      get_user_sync_state: { revision: 0, restore_epoch: 0 },
-      get_dashboard_summary: {
-        today_todos: [], habits: [], habit_logs: [], weekly_habits: [], expense_categories: [],
-        overview: { todo_total: 0, todo_done: 0, habit_total: 0, habit_done: 0, goal_total: 0, goal_percent: 0, week_workouts: 0, ledger_total: 0, note_total: 0, problem_total: 0, workout_total: 0, total_records: 0, pinned_total: 0, month_income: 0, month_expense: 0 },
-        fitness: { total: 0, month_sessions: 0, month_minutes: 0, week_sessions: 0, week_volume: 0, body_parts: [], month_body_parts: [] }
-      },
-      get_today_todos: [],
-      get_focus_items: [],
-      apply_workbench_operation: { id: 'created-1' }
-    }
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payloads[name ?? ''] ?? {}) })
-  })
-  await page.route('**/storage/v1/**', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
-  })
-  await page.goto(`/update-password#access_token=${token()}&refresh_token=refresh-token&expires_in=3600&token_type=bearer&type=invite`)
-  await expect(page.getByRole('heading', { name: '设置新密码' })).toBeVisible()
-  await page.goto('/')
-  await expect(page.getByLabel('智能快速记录')).toBeVisible()
+  await loginWorkbench(page)
 }
 
 test('first-load deep links fall back to the login page without a service worker', async ({ page }) => {
@@ -104,17 +50,17 @@ test('an invitation session can set a 12-character password', async ({ page }) =
     if (route.request().method() === 'PUT') {
       updatedPassword = String(JSON.parse(route.request().postData() ?? '{}').password ?? '')
     }
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ user }) })
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ user: e2eUser }) })
   })
   await page.route('**/auth/v1/token**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ access_token: token(), refresh_token: 'refresh-token', expires_in: 3600, token_type: 'bearer', user })
+      body: JSON.stringify({ access_token: e2eToken(), refresh_token: 'refresh-token', expires_in: 3600, token_type: 'bearer', user: e2eUser })
     })
   })
 
-  await page.goto(`/update-password#access_token=${token()}&refresh_token=refresh-token&expires_in=3600&token_type=bearer&type=invite`)
+  await page.goto(`/update-password#access_token=${e2eToken()}&refresh_token=refresh-token&expires_in=3600&token_type=bearer&type=invite`)
   await expect(page.getByRole('heading', { name: '设置新密码' })).toBeVisible()
   await page.getByLabel('新密码').fill('correct-horse-1')
   await page.getByLabel('确认密码').fill('correct-horse-1')
@@ -124,13 +70,13 @@ test('an invitation session can set a 12-character password', async ({ page }) =
 
 test('logout warns about pending outbox data and clears user-scoped offline state', async ({ page }) => {
   await page.route('**/auth/v1/user', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ user }) })
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ user: e2eUser }) })
   })
   await page.route('**/auth/v1/token**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ access_token: token(), refresh_token: 'refresh-token', expires_in: 3600, token_type: 'bearer', user })
+      body: JSON.stringify({ access_token: e2eToken(), refresh_token: 'refresh-token', expires_in: 3600, token_type: 'bearer', user: e2eUser })
     })
   })
   await page.route('**/auth/v1/logout*', async (route) => {
@@ -148,7 +94,7 @@ test('logout warns about pending outbox data and clears user-scoped offline stat
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
   })
 
-  await page.goto(`/update-password#access_token=${token()}&refresh_token=refresh-token&expires_in=3600&token_type=bearer&type=invite`)
+  await page.goto(`/update-password#access_token=${e2eToken()}&refresh_token=refresh-token&expires_in=3600&token_type=bearer&type=invite`)
   await expect(page.getByRole('heading', { name: '设置新密码' })).toBeVisible()
   await page.goto('/')
   await expect(page.getByRole('button', { name: '退出登录' }).first()).toBeVisible()
@@ -168,7 +114,7 @@ test('logout warns about pending outbox data and clears user-scoped offline stat
         tx.onerror = () => reject(tx.error)
       }
     })
-  }, user.id)
+  }, e2eUser.id)
 
   let warning = ''
   page.once('dialog', async (dialog) => {
@@ -183,7 +129,7 @@ test('logout warns about pending outbox data and clears user-scoped offline stat
     lastUser: localStorage.getItem('workbench:last-user:v1'),
     pomodoro: localStorage.getItem(`workbench:pomodoro:v3:${userId}`),
     databaseExists: (await indexedDB.databases()).some((database) => database.name === `personal-workbench:${userId}`)
-  }), user.id)
+  }), e2eUser.id)
   expect(cleanup).toEqual({ lastUser: null, pomodoro: null, databaseExists: false })
 })
 
@@ -219,9 +165,15 @@ test('data manager exposes structured CSV and one-time ICS choices', async ({ pa
   expect(download.suggestedFilename()).toMatch(/^待办日历-\d{8}\.ics$/)
 })
 
-test('quick capture confirms todo, ledger and note through the idempotent operation endpoint', async ({ page }) => {
+test('quick capture confirms todo, ledger and note through the idempotent command endpoint', async ({ page }) => {
   const operations: string[] = []
   await mockAuthenticatedWorkbench(page, operations)
+  const commands: string[] = []
+  await page.route('**/rest/v1/rpc/apply_workbench_command_v2', async (route) => {
+    const payload = JSON.parse(route.request().postData() ?? '{}') as { p_kind?: string }
+    commands.push(String(payload.p_kind ?? ''))
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'applied', command_id: 'mock', entity_id: 'mock', data: { id: 'mock' }, current: null, conflicting_fields: [], message: null }) })
+  })
   for (const [source, button] of [
     ['待办：明天交周报', '确认保存为待办'],
     ['支出：午饭 45', '确认保存为记账'],
@@ -232,5 +184,33 @@ test('quick capture confirms todo, ledger and note through the idempotent operat
     await page.getByRole('button', { name: button }).click()
     await expect(page.getByRole('dialog', { name: '智能快速记录' })).toHaveCount(0)
   }
-  expect(operations).toEqual(['todo.create', 'ledger.create', 'note.create'])
+  // WP3 后智能记录走 V2 命令协议；V1 operation 端点不再有新调用。
+  expect(commands).toEqual(['todo.create', 'ledger.create', 'note.create'])
+  expect(operations).toEqual([])
+})
+
+test('share target retries with the same V2 command and entity ids', async ({ page }) => {
+  await mockAuthenticatedWorkbench(page)
+  const requests: Array<{ p_command_id: string; p_entity_id: string }> = []
+  await page.route('**/rest/v1/rpc/apply_workbench_command_v2', async (route) => {
+    const payload = JSON.parse(route.request().postData() ?? '{}') as { p_command_id: string; p_entity_id: string }
+    requests.push(payload)
+    if (requests.length === 1) {
+      await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'validation temporarily unavailable' }) })
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ status: 'applied', command_id: payload.p_command_id, entity_id: payload.p_entity_id, data: { id: payload.p_entity_id }, current: null, conflicting_fields: [], message: null })
+    })
+  })
+  await page.goto('/share?title=设计文章&url=https%3A%2F%2Fexample.com')
+  await page.getByRole('button', { name: '确认保存' }).click()
+  // supabase 的 PostgrestError 不是 Error 实例，UI 呈现兜底文案。
+  await expect(page.getByRole('alert')).toContainText('保存到 Inbox 失败')
+  await page.getByRole('button', { name: '确认保存' }).click()
+  await expect(page.getByRole('button', { name: '已保存到 Inbox' })).toBeDisabled()
+  expect(requests).toHaveLength(2)
+  expect(requests[1]).toMatchObject(requests[0])
 })

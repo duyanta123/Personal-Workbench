@@ -3,6 +3,8 @@ import type { PomodoroPrefs, UserPreferences } from '../types'
 export interface PreferencesPatch {
   categories?: UserPreferences['categories']
   monthly_budget?: number | null
+  monthly_budget_minor?: number | null
+  currency_code?: UserPreferences['currency_code']
   pomodoro?: PomodoroPrefs
 }
 
@@ -17,8 +19,8 @@ export interface BodyMetricPatch {
   note?: string | null
 }
 
-export function buildBodyMetricUpsert(userId: string, input: BodyMetricPatch): Record<string, unknown> {
-  const payload: Record<string, unknown> = { user_id: userId, date: input.date }
+export function buildBodyMetricUpsert(input: BodyMetricPatch): Record<string, unknown> {
+  const payload: Record<string, unknown> = { date: input.date }
   if (input.weight !== undefined) payload.weight = input.weight
   if (input.body_fat !== undefined) payload.body_fat = input.body_fat
   if (input.note !== undefined) payload.note = input.note

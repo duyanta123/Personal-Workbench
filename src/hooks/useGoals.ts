@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { enqueueOperation } from '../lib/outbox'
+import { createEntity, deleteEntity, updateEntity } from '../lib/domainCommands'
 import { afterCursor, cursorScope, cursorToken, getPageCursor, rememberPageCursor } from '../lib/cursorPagination'
 import type { Goal } from '../types'
 import { useAuth } from './useAuth'
@@ -80,7 +80,7 @@ export function useAddGoal() {
       pinned?: boolean
     }) => {
       if (!userId) throw new Error('未登录')
-      return enqueueOperation<Goal>(userId, 'goal.create', input)
+      return createEntity(qc, userId, 'goal', input)
     },
     onSuccess: () => linkedGoalKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -101,7 +101,9 @@ export function useAdjustGoal() {
   return useMutation({
     mutationFn: async ({ id, delta }: { id: string; delta: number }) => {
       if (!userId) throw new Error('未登录')
-      return enqueueOperation<Goal>(userId, 'goal.adjust', { goal_id: id, delta })
+      const current = qc.getQueriesData<GoalPage>({ queryKey: goalsKey(userId) }).flatMap(([,page]) => page?.items ?? []).find((goal) => goal.id === id)
+      if (!current) throw new Error('目标尚未缓存，无法离线调整')
+      return updateEntity(qc, userId, 'goal', id, { current: Math.min(current.target, Math.max(0, current.current + delta)) })
     },
     onSuccess: () => linkedGoalKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -112,8 +114,8 @@ export function useUpdateGoal() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<Pick<Goal, 'name' | 'emoji' | 'current' | 'target' | 'unit' | 'note' | 'pinned'>> }) => {
-      const { error } = await supabase!.from('goals').update(patch).eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return updateEntity(qc, userId, 'goal', id, patch)
     },
     onSuccess: () => linkedGoalKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -124,8 +126,8 @@ export function useDeleteGoal() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase!.from('goals').delete().eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return deleteEntity(qc, userId, 'goal', id)
     },
     onSuccess: () => linkedGoalKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })
@@ -137,8 +139,8 @@ export function useToggleGoalPin() {
   const { userId } = useAuth()
   return useMutation({
     mutationFn: async ({ id, pinned }: { id: string; pinned: boolean }) => {
-      const { error } = await supabase!.from('goals').update({ pinned }).eq('id', id)
-      if (error) throw error
+      if (!userId) throw new Error('未登录')
+      return updateEntity(qc, userId, 'goal', id, { pinned })
     },
     onSuccess: () => linkedGoalKeys(userId).forEach((queryKey) => qc.invalidateQueries({ queryKey }))
   })

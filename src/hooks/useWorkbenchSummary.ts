@@ -57,7 +57,7 @@ export function useDashboardSummary(date: string, month: string) {
   return useQuery({
     queryKey: ['dashboard_summary', userId, date, month] as const,
     queryFn: async () => {
-      const { data, error } = await supabase!.rpc('get_dashboard_summary', { p_date: date, p_month: month })
+      const { data, error } = await supabase!.rpc('get_dashboard_summary_v2', { p_date: date, p_month: month })
       if (error) throw error
       const value = rpcRecord(data, 'dashboard summary')
       rpcArray(value.today_todos, 'dashboard summary.today_todos')
@@ -76,7 +76,7 @@ export function useWorkbenchInsights(date: string, month: string) {
   return useQuery({
     queryKey: ['workbench_insights', userId, date, month] as const,
     queryFn: async () => {
-      const { data, error } = await supabase!.rpc('get_workbench_insights', { p_date: date, p_month: month })
+      const { data, error } = await supabase!.rpc('get_workbench_insights_v2', { p_date: date, p_month: month })
       if (error) throw error
       const value = rpcRecord(data, 'workbench insights')
       rpcRecord(value.todos, 'workbench insights.todos')

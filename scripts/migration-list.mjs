@@ -41,3 +41,49 @@ export function parseMigrationList(output) {
   }
   return migrations
 }
+
+const MIGRATION_FILE_NAME = /^(\d{14})_[^.]+\.sql$/
+
+function utcVersionStamp(date = new Date()) {
+  const pad = (value, length = 2) => String(value).padStart(length, '0')
+  return [
+    date.getUTCFullYear(),
+    pad(date.getUTCMonth() + 1),
+    pad(date.getUTCDate()),
+    pad(date.getUTCHours()),
+    pad(date.getUTCMinutes()),
+    pad(date.getUTCSeconds())
+  ].join('')
+}
+
+// 校验本地迁移文件名：时间戳格式合法、严格递增、无重复、不晚于当前 UTC 时间。
+export function checkLocalMigrations(names, now = new Date()) {
+  const errors = []
+  const versions = []
+  const seen = new Map()
+  for (const name of names) {
+    const version = name.match(MIGRATION_FILE_NAME)?.[1]
+    if (!version) {
+      errors.push(`Invalid migration file name: ${name}`)
+      continue
+    }
+    if (seen.has(version)) {
+      errors.push(`Duplicate migration timestamp ${version}: ${seen.get(version)} and ${name}`)
+      continue
+    }
+    seen.set(version, name)
+    versions.push({ version, name })
+  }
+  for (let index = 1; index < versions.length; index += 1) {
+    if (versions[index].version <= versions[index - 1].version) {
+      errors.push(`Migration timestamps must be strictly increasing: ${versions[index - 1].name} -> ${versions[index].name}`)
+    }
+  }
+  const currentStamp = utcVersionStamp(now)
+  for (const { version, name } of versions) {
+    if (version > currentStamp) {
+      errors.push(`Migration timestamp is in the future: ${name}`)
+    }
+  }
+  return errors
+}

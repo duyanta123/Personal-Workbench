@@ -1,23 +1,28 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { ChevronLeft, ChevronRight, Pencil, Plus, Search, Settings2, Trash2, Wallet, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Minus, Pencil, Plus, Search, Settings2, Trash2, Wallet, X } from 'lucide-react'
 import {
   LEDGER_PAGE_SIZE,
   ledgerListKey,
   useAddLedgerEntry,
+  useCreateLedgerTransaction,
   useDeleteLedgerEntry,
   useLedgerEntries,
   useLedgerEntryById,
   useLedgerSummary,
+  useLedgerAccounts,
+  useLedgerPayees,
+  useLedgerRules,
+  useSwitchLedgerCurrency,
   useUpdateLedgerEntry
 } from '../hooks/useLedger'
-import type { LedgerPage } from '../hooks/useLedger'
+import type { LedgerListFilters, LedgerPage } from '../hooks/useLedger'
 import { usePreferences, useUpdatePreferences, mergeCategories } from '../hooks/usePreferences'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
 import { donutStops } from '../utils/ledgerStats'
-import type { LedgerEntry } from '../types'
+import type { CurrencyCode, LedgerEntry } from '../types'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import Segmented from '../components/ui/Segmented'
@@ -33,6 +38,12 @@ import { useSearchParams } from 'react-router-dom'
 import { useCurrentDate, useTodayDateField } from '../hooks/useCurrentDate'
 import { useClampPage } from '../hooks/useClampPage'
 import { BUILTIN_LEDGER_CATEGORIES } from '../utils/ledgerCategories'
+import RecurrencePanel from '../components/ui/RecurrencePanel'
+import LedgerAutomationPanel from '../components/ui/LedgerAutomationPanel'
+import LedgerSavedViewPanel, { type LedgerViewState } from '../components/ui/LedgerSavedViewPanel'
+import EntityLinksPanel from '../components/ui/EntityLinksPanel'
+import { applyLedgerRules } from '../utils/ledgerRules'
+import { CURRENCIES, formatMinor, parseMoneyToMinor, sumMinor } from '../utils/money'
 
 type Kind = LedgerEntry['kind']
 
@@ -42,15 +53,25 @@ export default function Ledger() {
   const [page, setPage] = useState(0)
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query.trim())
-  const entriesQuery = useLedgerEntries({ page, query: deferredQuery })
+  const [viewState, setViewState] = useState<LedgerViewState>({ sort: { column: 'entry_date', direction: 'desc' } })
+  const listFilters: LedgerListFilters = {
+    kind: viewState.kind, category: viewState.category, accountId: viewState.accountId,
+    status: viewState.status, dateFrom: viewState.dateFrom, dateTo: viewState.dateTo
+  }
+  const entriesQuery = useLedgerEntries({ page, query: deferredQuery, filters: listFilters, sort: viewState.sort })
   useClampPage(entriesQuery.data?.total, LEDGER_PAGE_SIZE, page, setPage)
   const entries = entriesQuery.data?.items
   const isLoading = entriesQuery.isLoading
   const summaryQuery = useLedgerSummary(month)
   const addEntry = useAddLedgerEntry()
+  const createTransaction = useCreateLedgerTransaction()
   const updateEntry = useUpdateLedgerEntry()
   const deleteEntry = useDeleteLedgerEntry()
   const prefsQuery = usePreferences()
+  const accountsQuery = useLedgerAccounts()
+  const payeesQuery = useLedgerPayees()
+  const rulesQuery = useLedgerRules()
+  const switchCurrency = useSwitchLedgerCurrency()
   const { data: prefs } = prefsQuery
   const updatePrefs = useUpdatePreferences()
   const push = useToastStore((s) => s.push)
@@ -61,6 +82,11 @@ export default function Ledger() {
   const [cat, setCat] = useState('餐饮')
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
+  const [accountId, setAccountId] = useState('')
+  const [payeeId, setPayeeId] = useState('')
+  const [currency, setCurrency] = useState<CurrencyCode>('CNY')
+  const [rulesConfirmed, setRulesConfirmed] = useState(false)
+  const [splits, setSplits] = useState<Array<{ category: string; amount: string; note: string }>>([])
   const dateField = useTodayDateField()
   const date = dateField.value
   const setDate = dateField.setValue
@@ -73,16 +99,20 @@ export default function Ledger() {
   const focusId = searchParams.get('focus')
   const focusQuery = useLedgerEntryById(focusId)
 
-  const expenseTotal = summaryQuery.data?.expense ?? 0
-  const incomeTotal = summaryQuery.data?.income ?? 0
-  const todayExpense = summaryQuery.data?.dailyExpense.find((row) => row.date === currentDate)?.total ?? 0
+  const expenseMinor = summaryQuery.data?.expenseMinor ?? 0
+  const incomeMinor = summaryQuery.data?.incomeMinor ?? 0
+  const todayExpenseMinor = summaryQuery.data?.dailyExpenseMinor.find((row) => row.date === currentDate)?.totalMinor ?? 0
 
   const customCats = useMemo(() => prefs?.categories?.[kind] ?? [], [kind, prefs?.categories])
   const cats = useMemo(() => mergeCategories(BUILTIN_LEDGER_CATEGORIES[kind], customCats), [kind, customCats])
+  const allCats = useMemo(() => mergeCategories(
+    [...BUILTIN_LEDGER_CATEGORIES.expense, ...BUILTIN_LEDGER_CATEGORIES.income],
+    [...(prefs?.categories?.expense ?? []), ...(prefs?.categories?.income ?? [])]
+  ), [prefs?.categories])
 
   const catTotals = useMemo(() => {
-    return summaryQuery.data?.categoryExpense ?? []
-  }, [summaryQuery.data?.categoryExpense])
+    return summaryQuery.data?.categoryExpenseMinor ?? []
+  }, [summaryQuery.data?.categoryExpenseMinor])
 
   const donut = donutStops(catTotals)
   const donutBg =
@@ -93,19 +123,38 @@ export default function Ledger() {
       : 'none'
 
   const bars = useMemo(() => {
-    const totals = new Map((summaryQuery.data?.dailyExpense ?? []).map((row) => [row.date, row.total]))
+    const totals = new Map((summaryQuery.data?.dailyExpenseMinor ?? []).map((row) => [row.date, row.totalMinor]))
     const days = new Date(year, monthNum, 0).getDate()
     return Array.from({ length: days }, (_, index) => {
       const day = index + 1
       const date = `${month}-${String(day).padStart(2, '0')}`
       return { day, date, total: totals.get(date) ?? 0 }
     })
-  }, [summaryQuery.data?.dailyExpense, year, monthNum, month])
+  }, [summaryQuery.data?.dailyExpenseMinor, year, monthNum, month])
   const maxBar = Math.max(1, ...bars.map((b) => b.total))
 
   const budget = prefs?.monthly_budget ?? null
+  const budgetMinor = prefs?.monthly_budget_minor ?? (budget === null ? null : Math.round(budget * 100))
+  const baseDraft = useMemo(() => {
+    let amountMinor = 0
+    try { amountMinor = amount ? parseMoneyToMinor(amount) : 0 } catch { /* preview stays empty until valid */ }
+    return { kind, category: cat, amount_minor: amountMinor, note: note.trim() || null, account_id: accountId || null, payee_id: payeeId || null }
+  }, [accountId, amount, cat, kind, note, payeeId])
+  const rulePreview = useMemo(() => applyLedgerRules(baseDraft, rulesQuery.data ?? []), [baseDraft, rulesQuery.data])
+  const splitMinor = useMemo(() => {
+    try { return sumMinor(splits.map((split) => parseMoneyToMinor(split.amount))) } catch { return -1 }
+  }, [splits])
+  const splitBalanced = splits.length === 0 || (baseDraft.amount_minor > 0 && splitMinor === baseDraft.amount_minor)
 
-  useEffect(() => setPage(0), [query])
+  useEffect(() => setPage(0), [query, viewState.kind, viewState.category, viewState.accountId, viewState.status, viewState.dateFrom, viewState.dateTo, viewState.sort])
+  useEffect(() => setCurrency(prefs?.currency_code ?? 'CNY'), [prefs?.currency_code])
+  useEffect(() => {
+    if (!editingId && !accountId) {
+      const defaultAccount = accountsQuery.data?.find((account) => !account.archived)
+      if (defaultAccount) setAccountId(defaultAccount.id)
+    }
+  }, [accountId, accountsQuery.data, editingId])
+  useEffect(() => setRulesConfirmed(false), [baseDraft, rulesQuery.data])
   useEffect(() => {
     if (!focusId || focusQuery.isLoading || focusQuery.data !== null) return
     const next = new URLSearchParams(searchParams)
@@ -115,7 +164,7 @@ export default function Ledger() {
   }, [focusId, focusQuery.isLoading, focusQuery.data, push, searchParams, setSearchParams])
 
   const { requestDelete, isPending: isDeletePending, remainingSeconds } = useDeferredDelete<LedgerEntry, LedgerPage>({
-    key: ledgerListKey(userId, page, deferredQuery),
+    key: ledgerListKey(userId, page, deferredQuery, listFilters, viewState.sort),
     label: (e) => `${e.category} ${e.amount}`,
     remove: (id) => deleteEntry.mutateAsync(id),
     cache: {
@@ -132,6 +181,7 @@ export default function Ledger() {
     setEditingId(null)
     setAmount('')
     setNote('')
+    setAccountId(''); setPayeeId(''); setRulesConfirmed(false); setSplits([])
     dateField.resetToToday()
   }
 
@@ -139,23 +189,28 @@ export default function Ledger() {
     setEditingId(e.id)
     setKind(e.kind)
     setCat(e.category)
-    setAmount(String(e.amount))
+    setAmount(((e.amount_minor ?? 0) / 100).toFixed(2))
     setNote(e.note ?? '')
+    setAccountId(e.account_id ?? ''); setPayeeId(e.payee_id ?? ''); setCurrency(e.currency_code ?? 'CNY')
     setDate(e.entry_date)
   }
 
   async function handleSubmit(ev: FormEvent) {
     ev.preventDefault()
-    const amt = Number(amount)
-    if (!amt || amt <= 0) return
-    const payload = { kind, category: cat, amount: amt, note: note.trim() || null, entry_date: date }
+    let amountMinor: number
+    try { amountMinor = parseMoneyToMinor(amount) } catch (cause) { push({ kind: 'error', message: (cause as Error).message }); return }
+    if (amountMinor <= 0 || !splitBalanced || (rulePreview.changes.length > 0 && !rulesConfirmed)) return
+    const applied = rulePreview.result
+    const payload = { kind: applied.kind, category: applied.category, amount, note: applied.note, entry_date: date,
+      account_id: applied.account_id, payee_id: applied.payee_id, currency_code: currency, status: 'posted' as const }
     try {
       if (editingId) {
         await updateEntry.mutateAsync({ id: editingId, patch: payload })
         push({ kind: 'success', message: '账单已更新' })
       } else {
-        await addEntry.mutateAsync(payload)
-        push({ kind: 'success', message: `已记一笔 ¥${amt.toFixed(2)}` })
+        if (splits.length) await createTransaction.mutateAsync({ entry: payload, splits: splits.map((split) => ({ category: split.category, amount_minor: parseMoneyToMinor(split.amount), note: split.note.trim() || null })) })
+        else await addEntry.mutateAsync(payload)
+        push({ kind: 'success', message: `已记一笔 ${formatMinor(amountMinor, currency)}` })
       }
       resetForm()
     } catch {
@@ -185,7 +240,7 @@ export default function Ledger() {
     const v = Number(budgetVal)
     if (!Number.isFinite(v) || v <= 0) return
     try {
-      await updatePrefs.mutateAsync({ monthly_budget: v })
+      await updatePrefs.mutateAsync({ monthly_budget: v, monthly_budget_minor: parseMoneyToMinor(budgetVal) })
       setBudgetEdit(false)
       push({ kind: 'success', message: `预算设为 ¥${v}` })
     } catch {
@@ -195,13 +250,29 @@ export default function Ledger() {
 
   async function clearBudget() {
     try {
-      await updatePrefs.mutateAsync({ monthly_budget: null })
+      await updatePrefs.mutateAsync({ monthly_budget: null, monthly_budget_minor: null })
       setBudgetEdit(false)
       setBudgetVal('')
       push({ kind: 'success', message: '已清除预算' })
     } catch {
       push({ kind: 'error', message: '预算清除失败，请重试' })
     }
+  }
+
+  async function confirmPlanned(entry: LedgerEntry) {
+    try {
+      await updateEntry.mutateAsync({ id: entry.id, patch: { status: 'posted' } })
+      push({ kind: 'success', message: '周期账目已确认入账' })
+    } catch {
+      push({ kind: 'error', message: '确认入账失败，请重试' })
+    }
+  }
+
+  async function changeCurrency(next: CurrencyCode) {
+    if (next === currency) return
+    if (!window.confirm(`将账本币种从 ${currency} 重标为 ${next}？金额数字不会换算。`)) return
+    try { await switchCurrency.mutateAsync(next); setCurrency(next); push({ kind: 'success', message: `账本币种已重标为 ${next}` }) }
+    catch (cause) { push({ kind: 'error', message: cause instanceof Error ? cause.message : '币种切换失败' }) }
   }
 
   return (
@@ -214,13 +285,29 @@ export default function Ledger() {
       {(entriesQuery.isError || summaryQuery.isError || prefsQuery.isError) && (
         <QueryError onRetry={() => { entriesQuery.refetch(); summaryQuery.refetch(); prefsQuery.refetch() }} />
       )}
+      <RecurrencePanel entityType="ledger" />
+      <LedgerAutomationPanel entries={entries ?? []} />
+      <LedgerSavedViewPanel
+        query={query}
+        state={viewState}
+        categories={allCats}
+        accounts={accountsQuery.data ?? []}
+        onChange={setViewState}
+        onApplyView={(next) => { setQuery(next.query); setViewState(next.state) }}
+      />
 
       {focusQuery.data && (
-        <div className="rounded-2xl border border-accent bg-accent-2/40 p-4 shadow-card">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">搜索定位</div>
-          <div className="mt-1 text-sm font-semibold text-ink">{focusQuery.data.category} · {focusQuery.data.kind === 'expense' ? '-' : '+'}¥{focusQuery.data.amount.toFixed(2)}</div>
-          {focusQuery.data.note && <p className="mt-1 text-xs text-ink-2">{focusQuery.data.note}</p>}
-          <button type="button" onClick={() => { const next = new URLSearchParams(searchParams); next.delete('focus'); setSearchParams(next, { replace: true }) }} className="mt-2 text-xs font-medium text-accent">关闭定位</button>
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-accent bg-accent-2/40 p-4 shadow-card">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">搜索定位</div>
+            <div className="mt-1 text-sm font-semibold text-ink">
+              {focusQuery.data.category} · {focusQuery.data.kind === 'expense' ? '-' : '+'}
+              {formatMinor(focusQuery.data.amount_minor ?? 0, focusQuery.data.currency_code)}
+            </div>
+            {focusQuery.data.note && <p className="mt-1 text-xs text-ink-2">{focusQuery.data.note}</p>}
+            <button type="button" onClick={() => { const next = new URLSearchParams(searchParams); next.delete('focus'); setSearchParams(next, { replace: true }) }} className="mt-2 text-xs font-medium text-accent">关闭定位</button>
+          </div>
+          <EntityLinksPanel sourceKind="ledger" sourceId={focusQuery.data.id} />
         </div>
       )}
 
@@ -231,19 +318,19 @@ export default function Ledger() {
         <div className="rounded-2xl border border-border bg-surface p-4">
           <div className="text-xs text-ink-3">本月支出</div>
           <div className="mt-1 text-lg font-bold tracking-tight text-danger tabular-nums">
-            -¥{expenseTotal.toFixed(2)}
+            -{formatMinor(expenseMinor, currency)}
           </div>
         </div>
         <div className="rounded-2xl border border-border bg-surface p-4">
           <div className="text-xs text-ink-3">本月收入</div>
           <div className="mt-1 text-lg font-bold tracking-tight text-m1 tabular-nums">
-            +¥{incomeTotal.toFixed(2)}
+            +{formatMinor(incomeMinor, currency)}
           </div>
         </div>
         <div className="rounded-2xl border border-border bg-surface p-4">
           <div className="text-xs text-ink-3">结余</div>
           <div className="mt-1 text-lg font-bold tracking-tight text-ink tabular-nums">
-            ¥{(incomeTotal - expenseTotal).toFixed(2)}
+            {formatMinor(incomeMinor - expenseMinor, currency)}
           </div>
         </div>
       </div>
@@ -272,12 +359,12 @@ export default function Ledger() {
         ) : (
           <>
             <div className="text-sm">
-              {budget !== null ? (
+              {budgetMinor !== null ? (
                 <span className="text-ink">
                   本月预算{' '}
-                  <span className="font-bold tabular-nums">¥{budget.toFixed(0)}</span>
+                  <span className="font-bold tabular-nums">{formatMinor(budgetMinor, currency)}</span>
                   <span className="ml-2 text-xs text-ink-3">
-                    剩余 <span className="tabular-nums">¥{(budget - expenseTotal).toFixed(0)}</span>
+                    剩余 <span className="tabular-nums">{formatMinor(budgetMinor - expenseMinor, currency)}</span>
                   </span>
                 </span>
               ) : (
@@ -286,13 +373,13 @@ export default function Ledger() {
             </div>
             <button
               onClick={() => {
-                setBudgetVal(budget ? String(budget) : '')
+                setBudgetVal(budgetMinor ? String(budgetMinor / 100) : '')
                 setBudgetEdit(true)
               }}
               className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:text-accent-hover"
             >
               <Settings2 size={13} />
-              {budget !== null ? '调整' : '设置'}
+              {budgetMinor !== null ? '调整' : '设置'}
             </button>
           </>
         )}
@@ -368,6 +455,35 @@ export default function Ledger() {
               max="9999999999.99"
             className="w-32 tabular-nums"
           />
+          <select
+            aria-label="币种"
+            value={currency}
+            onChange={(e) => void changeCurrency(e.target.value as CurrencyCode)}
+            disabled={switchCurrency.isPending}
+            className="rounded-lg border border-border bg-page px-3 py-2 text-sm text-ink"
+          >
+            {CURRENCIES.map((code) => <option key={code} value={code}>{code}</option>)}
+          </select>
+          <select
+            aria-label="账户"
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            className="rounded-lg border border-border bg-page px-3 py-2 text-sm text-ink"
+          >
+            <option value="">默认账户</option>
+            {(accountsQuery.data ?? []).filter((account) => !account.archived).map((account) => (
+              <option key={account.id} value={account.id}>{account.name}</option>
+            ))}
+          </select>
+          <select
+            aria-label="收付款方"
+            value={payeeId}
+            onChange={(e) => setPayeeId(e.target.value)}
+            className="rounded-lg border border-border bg-page px-3 py-2 text-sm text-ink"
+          >
+            <option value="">收付款方（可选）</option>
+            {(payeesQuery.data ?? []).map((payee) => <option key={payee.id} value={payee.id}>{payee.name}</option>)}
+          </select>
           <Input
             type="date"
             value={date}
@@ -382,12 +498,54 @@ export default function Ledger() {
               maxLength={100000}
             className="min-w-40 flex-1"
           />
-          <Button type="submit" disabled={!amount || Number(amount) <= 0 || addEntry.isPending || updateEntry.isPending}>
+          <Button type="submit" disabled={!amount || Number(amount) <= 0 || !splitBalanced || (rulePreview.changes.length > 0 && !rulesConfirmed) || addEntry.isPending || updateEntry.isPending || createTransaction.isPending}>
             <Plus size={16} />
             {editingId ? '保存修改' : '记一笔'}
           </Button>
         </div>
+        {rulePreview.changes.length > 0 && (
+          <div className="rounded-lg border border-accent/30 bg-accent-2/30 p-3 text-xs text-ink-2">
+            <div className="font-semibold text-ink">规则预览</div>
+            <ul className="mt-1 space-y-1">
+              {rulePreview.changes.map((change) => <li key={`${change.ruleId}-${change.field}`}>{change.name}：{change.field} {String(change.before ?? '空')} → {String(change.after ?? '空')}</li>)}
+            </ul>
+            <label className="mt-2 flex items-center gap-2"><input type="checkbox" checked={rulesConfirmed} onChange={(e) => setRulesConfirmed(e.target.checked)} />确认应用以上变更</label>
+          </div>
+        )}
+        {!editingId && (
+          <div className="rounded-lg border border-border bg-page/50 p-3">
+            <div className="flex items-center justify-between text-xs font-semibold text-ink">
+              <span>拆分项（可选）</span>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setSplits((items) => [...items, { category: cat, amount: '', note: '' }])}><Plus size={13} />添加</Button>
+            </div>
+            {splits.map((split, index) => (
+              <div key={index} className="mt-2 grid grid-cols-[1fr_7rem_1fr_auto] gap-2">
+                <Input aria-label={`拆分分类 ${index + 1}`} value={split.category} onChange={(e) => setSplits((items) => items.map((item, i) => i === index ? { ...item, category: e.target.value } : item))} placeholder="分类" />
+                <Input aria-label={`拆分金额 ${index + 1}`} value={split.amount} onChange={(e) => setSplits((items) => items.map((item, i) => i === index ? { ...item, amount: e.target.value } : item))} placeholder="金额" inputMode="decimal" />
+                <Input aria-label={`拆分备注 ${index + 1}`} value={split.note} onChange={(e) => setSplits((items) => items.map((item, i) => i === index ? { ...item, note: e.target.value } : item))} placeholder="备注" />
+                <IconButton type="button" size="sm" onClick={() => setSplits((items) => items.filter((_, i) => i !== index))} aria-label="删除拆分项"><Minus size={14} /></IconButton>
+              </div>
+            ))}
+            {splits.length > 0 && <div className={cn('mt-2 text-right text-xs tabular-nums', splitBalanced ? 'text-ink-3' : 'text-danger')}>拆分合计 {formatMinor(Math.max(0, splitMinor), currency)} / 原账目 {formatMinor(baseDraft.amount_minor, currency)}{!splitBalanced && '，金额必须严格相等'}</div>}
+          </div>
+        )}
       </form>
+
+      {(summaryQuery.data?.upcoming.length ?? 0) > 0 && (
+        <section className="rounded-lg border border-border bg-surface p-4">
+          <div className="flex items-center justify-between"><h2 className="text-sm font-semibold text-ink">Upcoming</h2><span className="text-xs text-ink-3">待确认周期账目</span></div>
+          <ul className="mt-3 divide-y divide-border">
+            {summaryQuery.data?.upcoming.slice(0, 20).map((entry) => (
+              <li key={entry.id} className="flex items-center gap-3 py-2">
+                <span className="w-24 shrink-0 text-xs text-ink-3 tabular-nums">{entry.entry_date}</span>
+                <span className="min-w-0 flex-1 truncate text-sm text-ink">{entry.category}{entry.note ? ` · ${entry.note}` : ''}</span>
+                <span className={cn('text-sm font-semibold tabular-nums', entry.kind === 'expense' ? 'text-danger' : 'text-m1')}>{entry.kind === 'expense' ? '-' : '+'}{formatMinor(entry.amount_minor ?? 0, entry.currency_code ?? currency)}</span>
+                <Button type="button" size="sm" onClick={() => void confirmPlanned(entry)} disabled={updateEntry.isPending}><Check size={14} />确认</Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* 支出构成：饼图 + 图例 */}
       {catTotals.length > 0 && (
@@ -401,7 +559,7 @@ export default function Ledger() {
               <div className="absolute inset-3 flex flex-col items-center justify-center rounded-full bg-surface">
                 <span className="text-[10px] text-ink-3">总支出</span>
                 <span className="text-base font-bold text-ink tabular-nums">
-                  ¥{expenseTotal.toFixed(0)}
+                  {formatMinor(expenseMinor, currency)}
                 </span>
               </div>
             </div>
@@ -416,7 +574,7 @@ export default function Ledger() {
                     </div>
                   </span>
                   <span className="w-16 shrink-0 text-right text-ink-2 tabular-nums">
-                    ¥{s.value.toFixed(0)} · {Math.round(s.pct)}%
+                  {formatMinor(s.value, currency)} · {Math.round(s.pct)}%
                   </span>
                 </li>
               ))}
@@ -441,7 +599,7 @@ export default function Ledger() {
                       isToday ? 'bg-accent' : b.total ? 'bg-m3/70 hover:bg-m3' : 'bg-nested'
                     )}
                     style={{ height: `${h}%` }}
-                    title={`${b.day} 日 ¥${b.total.toFixed(0)}`}
+                    title={`${b.day} 日 ${formatMinor(b.total, currency)}`}
                   />
                   {b.day % 5 === 1 && (
                     <span className="absolute -bottom-4 text-[9px] text-ink-3 tabular-nums">{b.day}</span>
@@ -495,7 +653,8 @@ export default function Ledger() {
                   e.kind === 'expense' ? 'text-danger' : 'text-m1'
                 )}
               >
-                {e.kind === 'expense' ? '-' : '+'}¥{e.amount.toFixed(2)}
+                {e.kind === 'expense' ? '-' : '+'}{formatMinor(e.amount_minor ?? 0, e.currency_code ?? currency)}
+                {e.status === 'planned' && <span className="ml-2 rounded bg-accent-2 px-1.5 py-0.5 text-[10px] font-medium text-accent">待确认</span>}
               </div>
               {isDeletePending(e.id) && <span className="shrink-0 text-[10px] font-medium text-danger">待删除 {remainingSeconds(e.id)}s</span>}
               <div className="flex shrink-0 items-center gap-0.5">
@@ -544,10 +703,10 @@ export default function Ledger() {
           <SideCard title="收支概况" icon={<Wallet size={14} />}>
             <ul className="space-y-2">
               {[
-                { k: '本月收入', v: `¥${incomeTotal.toFixed(2)}`, c: 'var(--m1)' },
-                { k: '本月支出', v: `¥${expenseTotal.toFixed(2)}`, c: 'var(--danger)' },
-                { k: '净结余', v: `¥${(incomeTotal - expenseTotal).toFixed(2)}` },
-                { k: '今日支出', v: `¥${todayExpense.toFixed(2)}` },
+                { k: '本月收入', v: formatMinor(incomeMinor, currency), c: 'var(--m1)' },
+                { k: '本月支出', v: formatMinor(expenseMinor, currency), c: 'var(--danger)' },
+                { k: '净结余', v: formatMinor(incomeMinor - expenseMinor, currency) },
+                { k: '今日支出', v: formatMinor(todayExpenseMinor, currency) },
                 { k: '总笔数', v: `${summaryQuery.data?.total ?? 0} 笔` }
               ].map((r) => (
                 <li key={r.k} className="flex items-center justify-between text-xs">
@@ -568,7 +727,7 @@ export default function Ledger() {
             ) : (
               <ul className="space-y-2">
                 {catTotals.slice(0, 6).map(([cat, val]) => {
-                  const pct = expenseTotal ? Math.round((val / expenseTotal) * 100) : 0
+                  const pct = expenseMinor ? Math.round((val / expenseMinor) * 100) : 0
                   return (
                     <li key={cat} className="flex items-center gap-2 text-xs">
                       <span className="w-8 shrink-0 truncate text-ink-2">{cat}</span>

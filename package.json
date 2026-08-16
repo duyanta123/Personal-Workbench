@@ -9,12 +9,13 @@
     "typecheck": "tsc -p tsconfig.app.json --noEmit --incremental false",
     "lint": "eslint . --max-warnings 0",
     "check:migrations": "node scripts/check-migrations.mjs",
+    "check:migrations:local": "node scripts/check-migrations.mjs --local-only",
     "preview": "vite preview",
     "test": "vitest run",
     "test:scripts": "node --test scripts/*.test.mjs",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "ci": "npm run lint && npm run typecheck && npm run test:scripts && npm test && npm run build"
+    "ci": "npm run lint && npm run typecheck && npm run test:scripts && npm test && npm run check:migrations:local && npm run build"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

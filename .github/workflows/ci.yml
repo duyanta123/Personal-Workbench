@@ -45,6 +45,21 @@ jobs:
       - run: supabase db reset
       - run: supabase db lint --local --level warning
       - run: supabase test db
+      - name: Fail on database type drift
+        run: |
+          mkdir -p supabase/generated
+          supabase gen types typescript --local --schema public > supabase/generated/database.types.ts
+          if git ls-files --error-unmatch supabase/generated/database.types.ts >/dev/null 2>&1; then
+            git diff --exit-code -- supabase/generated/database.types.ts
+          else
+            echo "::warning::supabase/generated/database.types.ts is not tracked yet. Download it from this job's artifact and commit it once to enable drift enforcement."
+          fi
+      - name: Upload generated database types
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: database-types
+          path: supabase/generated/database.types.ts
       - name: Validate deferred rollout migrations
         run: cp supabase/deferred_migrations/*.sql supabase/migrations/
       - run: supabase db reset

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Compass, Mail, Wrench } from 'lucide-react'
-import { Link, Navigate } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { isSupabaseConfigured, supabase } from '../lib/supabase'
 import Button from './ui/Button'
@@ -9,13 +9,16 @@ import Input from './ui/Input'
 import Field from './ui/Field'
 
 export default function AuthPage() {
+  const [searchParams] = useSearchParams()
+  const requestedRedirect = searchParams.get('redirect')
+  const redirect = requestedRedirect?.startsWith('/') && !requestedRedirect.startsWith('//') ? requestedRedirect : '/'
   const { session } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  if (session) return <Navigate to="/" replace />
+  if (session) return <Navigate to={redirect} replace />
 
   if (!isSupabaseConfigured) {
     return (

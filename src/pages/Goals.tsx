@@ -21,6 +21,7 @@ import IconPicker from '../components/ui/IconPicker'
 import { cn } from '../lib/cn'
 import QueryError from '../components/ui/QueryError'
 import { isGoalProgressValid } from '../utils/dataConsistency'
+import EntityTemplatePanel from '../components/ui/EntityTemplatePanel'
 
 export default function Goals() {
   const [page, setPage] = useState(0)
@@ -172,6 +173,17 @@ export default function Goals() {
         </div>
         <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注（可选）" rows={2} maxLength={100000} />
       </form>
+
+      <EntityTemplatePanel
+        kind="goal"
+        canSave={Boolean(name.trim()) && Number(target) > 0}
+        draft={{ name: name.trim(), emoji: icon || 'target', target: Number(target), unit: unit.trim() || null, note: note.trim() || null, pinned: false }}
+        instantiate={(payload) => addGoal.mutateAsync({
+          name: String(payload.name ?? ''), emoji: String(payload.emoji ?? 'target'), current: 0,
+          target: Number(payload.target ?? 1), unit: typeof payload.unit === 'string' ? payload.unit : null,
+          note: typeof payload.note === 'string' ? payload.note : null, pinned: payload.pinned === true
+        })}
+      />
 
       {/* 目标列表 */}
       {isLoading ? (

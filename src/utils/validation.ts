@@ -8,7 +8,11 @@ export const LIMITS = {
 } as const
 
 export function parseTags(value: string): string[] {
-  const tags = value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)
+  const tags = value
+    .replace(/(^|\s)#([\w\u4e00-\u9fff/-]+)/g, '$1$2')
+    .split(/[,，\s]+/)
+    .map((tag) => tag.trim().replace(/^#/, ''))
+    .filter(Boolean)
   return validateTags(tags)
 }
 
@@ -16,6 +20,11 @@ export function validateTags(tags: string[]): string[] {
   if (tags.length > LIMITS.tags) throw new Error(`标签最多 ${LIMITS.tags} 个`)
   if (tags.some((tag) => tag.length > LIMITS.tag)) throw new Error(`单个标签不能超过 ${LIMITS.tag} 个字符`)
   return [...new Set(tags)]
+}
+
+/** 标签的统一展示形态：解析（parseTags）、补全、渲染、筛选共用 `#tag` 语法。 */
+export function renderTag(tag: string): string {
+  return `#${tag}`
 }
 
 export function requireLength(value: string, max: number, label: string, min = 0) {

@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select extensions.plan(8);
+select extensions.plan(9);
 select extensions.ok(not pg_catalog.has_table_privilege('authenticated', 'public.todos', 'INSERT'), 'direct todo inserts are revoked after rollout');
 select extensions.ok(not pg_catalog.has_table_privilege('authenticated', 'public.pomodoro_sessions', 'INSERT'), 'direct pomodoro inserts are revoked after rollout');
 select extensions.ok(not pg_catalog.has_function_privilege('authenticated', 'public.complete_pomodoro(date,integer)', 'EXECUTE'), 'legacy pomodoro RPC is revoked');
@@ -17,6 +17,25 @@ select extensions.ok(
     where id = 'avatars'
   ),
   'avatar bucket enforces WebP and 5 MiB limit'
+);
+
+-- Full lockdown matrix: no direct INSERT/UPDATE/DELETE remains on any
+-- workbench table whose writes must flow through the V2 command RPCs.
+select extensions.is(
+  (
+    select count(*) from unnest(array[
+      'todos', 'habits', 'habit_logs', 'ledger_entries', 'goals', 'notes',
+      'practice_problems', 'workout_sessions', 'workout_exercises',
+      'pomodoro_sessions', 'user_avatars', 'body_metrics',
+      'inbox_items', 'recurrence_rules', 'ledger_accounts', 'ledger_payees',
+      'ledger_rules', 'ledger_splits', 'ledger_reconciliations',
+      'workbench_templates', 'saved_views', 'entity_links'
+    ]) as tbl
+    cross join unnest(array['INSERT', 'UPDATE', 'DELETE']) as priv
+    where pg_catalog.has_table_privilege('authenticated', pg_catalog.format('public.%I', tbl), priv)
+  ),
+  0::bigint,
+  'direct INSERT/UPDATE/DELETE are revoked on all locked workbench tables'
 );
 
 insert into storage.objects (bucket_id, name) values

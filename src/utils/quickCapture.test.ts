@@ -46,6 +46,34 @@ describe('parseQuickCapture', () => {
     expect(parseQuickCapture('8月31日完成月报', context).candidates[0]).toMatchObject({ draft: { due_date: '2026-08-31' } })
   })
 
+  it('识别显式优先级并从待办正文移除控制词', () => {
+    const result = parseQuickCapture('待办：明天 P0 提交事故复盘 #work/ops', context)
+    expect(result.candidates[0]).toMatchObject({
+      kind: 'todo',
+      draft: { text: '提交事故复盘 #work/ops', level: 'high', due_date: '2026-08-13' }
+    })
+    expect(result.candidates[0].evidence).toContain('优先级：高优先级')
+  })
+
+  it('识别层级标签并写入笔记元数据', () => {
+    const result = parseQuickCapture('笔记：发布复盘 #work/project #复盘/发布', context)
+    expect(result.candidates[0]).toMatchObject({
+      kind: 'note',
+      draft: { body: '发布复盘', tags: ['work/project', '复盘/发布'] }
+    })
+  })
+
+  it('将需要补必填字段的显式实体前缀安全送入 Inbox', () => {
+    for (const [source, suggestedKind] of [
+      ['习惯：每天喝水', 'habit'], ['目标：存下应急金', 'goal'],
+      ['练习：两数之和', 'practice'], ['训练：腿部 45 分钟', 'workout']
+    ] as const) {
+      const result = parseQuickCapture(source, context)
+      expect(result.selectedKind).toBeNull()
+      expect(result.candidates[0]).toMatchObject({ kind: 'note', confidence: 'ambiguous', suggestedKind })
+    }
+  })
+
   it('多个金额和退款保持歧义，不自动选择', () => {
     const multiple = parseQuickCapture('午饭 45 打车 20', context)
     expect(multiple.selectedKind).toBeNull()
