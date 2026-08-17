@@ -1,8 +1,8 @@
 /**
  * 手写领域类型视图：以 src/types.ts 的业务模型为基础组装 Supabase Database 结构。
  * 权威 schema 见 supabase/generated/database.types.ts（由 `supabase gen types typescript
- * --local --schema public` 生成；CI 中的 "Fail on database type drift" 步骤在基线提交后
- * 保证其与迁移不漂移，基线未提交时该步骤仅告警并上传 artifact 供一次性提交）。
+ * --local --schema public` 生成；CI 中的 "Fail on database type drift" 步骤要求基线已提交，
+ * 并在生成结果与迁移不一致时直接失败）。
  * 修改数据库迁移后请重新生成该文件，并同步维护此处的手写映射。
  */
 import type {
