@@ -270,8 +270,8 @@ export default function Ledger() {
 
   async function changeCurrency(next: CurrencyCode) {
     if (next === currency) return
-    if (!window.confirm(`将账本币种从 ${currency} 重标为 ${next}？金额数字不会换算。`)) return
-    try { await switchCurrency.mutateAsync(next); setCurrency(next); push({ kind: 'success', message: `账本币种已重标为 ${next}` }) }
+    if (!window.confirm(`将空账本的本位币设置为 ${next}？产生第一笔账目后将无法切换。`)) return
+    try { await switchCurrency.mutateAsync(next); setCurrency(next); push({ kind: 'success', message: `账本本位币已设置为 ${next}` }) }
     catch (cause) { push({ kind: 'error', message: cause instanceof Error ? cause.message : '币种切换失败' }) }
   }
 

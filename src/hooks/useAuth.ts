@@ -5,12 +5,16 @@ import { supabase } from '../lib/supabase'
 import { queryClient } from '../lib/queryClient'
 import { clearUserLocalData } from '../lib/localData'
 
-interface AuthState {
+export interface AuthState {
   session: Session | null
   userId: string | null
   loading: boolean
   mode: 'online' | 'offline' | 'offline-readonly' | 'signed-out'
   canWrite: boolean
+  assuranceLevel: 'aal1' | 'aal2' | null
+  hasVerifiedMfa: boolean
+  refreshSecurityState: () => Promise<void>
+  reauthenticate: (password: string, totpCode?: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -21,6 +25,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [online, setOnline] = useState(() => navigator.onLine)
   const [offlineUserId, setOfflineUserId] = useState<string | null>(null)
+  const [assuranceLevel, setAssuranceLevel] = useState<'aal1' | 'aal2' | null>(null)
+  const [hasVerifiedMfa, setHasVerifiedMfa] = useState(false)
   const previousUserId = useRef<string | null | undefined>(undefined)
 
   const applySession = useCallback((next: Session | null, connectionOnline = navigator.onLine) => {
@@ -74,6 +80,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [applySession])
 
+  const refreshSecurityState = useCallback(async () => {
+    if (!supabase || !navigator.onLine) {
+      setAssuranceLevel(null)
+      setHasVerifiedMfa(false)
+      return
+    }
+    const [factors, assurance] = await Promise.all([
+      supabase.auth.mfa.listFactors(),
+      supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+    ])
+    if (factors.error) throw factors.error
+    if (assurance.error) throw assurance.error
+    setHasVerifiedMfa(factors.data.totp.some((factor) => factor.status === 'verified'))
+    const level = assurance.data.currentLevel
+    setAssuranceLevel(level === 'aal1' || level === 'aal2' ? level as 'aal1' | 'aal2' : null)
+  }, [])
+
+  const reauthenticate = useCallback(async (password: string, totpCode?: string) => {
+    if (!supabase || !session?.user.email) throw new Error('当前账号无法重新验证')
+    if (!navigator.onLine) throw new Error('敏感操作需要联网验证')
+    const signedIn = await supabase.auth.signInWithPassword({ email: session.user.email, password })
+    if (signedIn.error) throw signedIn.error
+    const factors = await supabase.auth.mfa.listFactors()
+    if (factors.error) throw factors.error
+    const factor = factors.data.totp.find((item) => item.status === 'verified')
+    if (factor) {
+      if (!totpCode?.trim()) throw new Error('请输入身份验证器中的 6 位动态验证码')
+      const verified = await supabase.auth.mfa.challengeAndVerify({ factorId: factor.id, code: totpCode.trim() })
+      if (verified.error) throw verified.error
+    }
+    const current = await supabase.auth.getSession()
+    if (current.error || !current.data.session) throw current.error ?? new Error('重新验证失败')
+    const encoded = current.data.session.access_token.split('.')[1] ?? ''
+    const padded = encoded.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(encoded.length / 4) * 4, '=')
+    const claims = JSON.parse(atob(padded)) as { iat?: number; aal?: string }
+    if (!claims.iat || Date.now() / 1000 - claims.iat > 300) throw new Error('重新验证已过期')
+    if (factor && claims.aal !== 'aal2') throw new Error('动态验证码验证未达到 AAL2')
+    applySession(current.data.session, true)
+    await refreshSecurityState()
+  }, [applySession, refreshSecurityState, session])
+
   useEffect(() => {
     if (!supabase) {
       setLoading(false)
@@ -110,6 +157,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [verifyOnlineSession])
 
+  useEffect(() => {
+    if (!session || !online) {
+      setAssuranceLevel(null)
+      setHasVerifiedMfa(false)
+      return
+    }
+    void refreshSecurityState().catch(() => {
+      setAssuranceLevel(null)
+      setHasVerifiedMfa(false)
+    })
+  }, [online, refreshSecurityState, session])
+
   const userId = session?.user.id ?? offlineUserId
   // 有 session（服务器确认过）才可写：纯离线只读（仅 lastUser 缓存）不能产生新写入。
   const mode: AuthState['mode'] = session
@@ -118,7 +177,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return createElement(
     AuthContext.Provider,
-    { value: { session, userId, loading, mode, canWrite: Boolean(session) } },
+    { value: {
+      session, userId, loading, mode, canWrite: Boolean(session), assuranceLevel,
+      hasVerifiedMfa, refreshSecurityState, reauthenticate
+    } },
     children
   )
 }

@@ -14,6 +14,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Search,
+  ShieldCheck,
   Cloud,
   Target,
   TriangleAlert,
@@ -36,6 +37,7 @@ import GlobalSearch from './ui/GlobalSearch'
 import DataManager from './ui/DataManager'
 import QuickCaptureDialog from './ui/QuickCaptureDialog'
 import SyncCenter from './ui/SyncCenter'
+import SecuritySettings from './ui/SecuritySettings'
 import SearchFocusBanner from './ui/SearchFocusBanner'
 import Modal from './ui/Modal'
 import { cancelAllPendingDeletes } from '../hooks/useDeferredDelete'
@@ -85,6 +87,7 @@ export default function Layout() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [dataOpen, setDataOpen] = useState(false)
   const [syncOpen, setSyncOpen] = useState(false)
+  const [securityOpen, setSecurityOpen] = useState(false)
 
   const { data: avatarRows } = useAvatars()
   const uploadAvatar = useUploadAvatar()
@@ -283,6 +286,13 @@ export default function Layout() {
                 数据备份
               </button>
               <button
+                onClick={() => setSecurityOpen(true)}
+                className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+              >
+                <ShieldCheck size={20} className="shrink-0" />
+                账号安全
+              </button>
+              <button
                 onClick={logout}
                 className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
               >
@@ -301,6 +311,9 @@ export default function Layout() {
               </IconButton>
               <IconButton onClick={() => setSyncOpen(true)} aria-label="同步中心" title="同步中心">
                 <Cloud size={20} />
+              </IconButton>
+              <IconButton onClick={() => setSecurityOpen(true)} aria-label="账号安全" title="账号安全">
+                <ShieldCheck size={20} />
               </IconButton>
               <IconButton onClick={logout} aria-label="退出登录" title="退出登录">
                 <LogOut size={20} />
@@ -427,6 +440,16 @@ export default function Layout() {
               数据备份
             </button>
             <button
+              onClick={() => {
+                setDrawerOpen(false)
+                setSecurityOpen(true)
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+            >
+              <ShieldCheck size={20} className="shrink-0" />
+              账号安全
+            </button>
+            <button
               onClick={logout}
               className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
             >
@@ -474,6 +497,7 @@ export default function Layout() {
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
       <DataManager open={dataOpen} onClose={() => setDataOpen(false)} />
       <SyncCenter open={syncOpen} onClose={() => setSyncOpen(false)} />
+      <SecuritySettings open={securityOpen} onClose={() => setSecurityOpen(false)} />
       <QuickCaptureDialog />
     </div>
   )

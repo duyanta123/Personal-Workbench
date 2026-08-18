@@ -9,6 +9,7 @@ import { buildStructuredCSV, STRUCTURED_EXPORT_OPTIONS } from '../../utils/struc
 import type { StructuredExportKind } from '../../utils/structuredExport'
 import Button from './Button'
 import Modal from './Modal'
+import SensitiveAuthDialog from './SensitiveAuthDialog'
 
 function stamp() {
   const d = new Date()
@@ -24,6 +25,8 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
   const [format, setFormat] = useState<'csv' | 'ics'>('csv')
   const [dataset, setDataset] = useState<StructuredExportKind>('todos')
   const [includeCompleted, setIncludeCompleted] = useState(false)
+  const [pendingRestore, setPendingRestore] = useState<ReturnType<typeof normalizeBackup> | null>(null)
+  const [authOpen, setAuthOpen] = useState(false)
 
   async function exportJSON() {
     setExporting(true)
@@ -76,9 +79,8 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
         if (total === 0) throw new Error('没有可恢复的数据')
         const summary = Object.entries(counts).filter(([, count]) => count > 0).map(([table, count]) => `${table} ${count}`).join('、')
         if (!window.confirm(`此操作会替换当前账号全部数据，且不可撤销。\n备份时间：${new Date(payload.metadata.exported_at).toLocaleString()}\n内容：${summary}\n\n确定继续吗？`)) return
-        const restored = await importData.mutateAsync(payload)
-        const parts = Object.entries(restored).map(([table, count]) => `${table} ${count} 条`).join('、')
-        push({ kind: 'success', message: `恢复完成：${parts}` })
+        setPendingRestore(payload)
+        setAuthOpen(true)
       } catch (err) {
         push({ kind: 'error', message: `恢复失败：${(err as Error).message}` })
       } finally {
@@ -88,7 +90,20 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
     reader.readAsText(file)
   }
 
-  return (
+  async function restoreVerified() {
+    if (!pendingRestore) return
+    try {
+      const restored = await importData.mutateAsync(pendingRestore)
+      const parts = Object.entries(restored).map(([table, count]) => `${table} ${count} 条`).join('、')
+      push({ kind: 'success', message: `恢复完成：${parts}` })
+      setPendingRestore(null)
+    } catch (err) {
+      push({ kind: 'error', message: `恢复失败：${(err as Error).message}` })
+      throw err
+    }
+  }
+
+  return <>
     <Modal open={open} onClose={onClose} title="数据备份">
         <div className="rounded-2xl border border-border bg-surface p-5 shadow-overlay">
           <div className="flex items-center justify-between">
@@ -163,5 +178,11 @@ export default function DataManager({ open, onClose }: { open: boolean; onClose:
           </div>
         </div>
     </Modal>
-  )
+    <SensitiveAuthDialog
+      open={authOpen}
+      title="验证后恢复备份"
+      onClose={() => setAuthOpen(false)}
+      onVerified={restoreVerified}
+    />
+  </>
 }

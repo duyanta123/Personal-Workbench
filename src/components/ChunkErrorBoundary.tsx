@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { captureException } from '../lib/monitoring'
 
 const RELOAD_KEY = 'workbench:chunk-reload:v1'
 const CHUNK_ERROR = /Loading chunk|ChunkLoadError|dynamically imported module|module script failed/i
@@ -16,7 +17,8 @@ export default class ChunkErrorBoundary extends Component<{ children: ReactNode 
     this.clearTimer = window.setTimeout(() => sessionStorage.removeItem(RELOAD_KEY), 10_000)
   }
 
-  componentDidCatch(error: Error, _info: ErrorInfo) {
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    captureException(error, { kind: CHUNK_ERROR.test(error.message) ? 'chunk_load' : 'render', componentStack: info.componentStack })
     if (!CHUNK_ERROR.test(error.message)) return
     const previous = Number(sessionStorage.getItem(RELOAD_KEY) ?? 0)
     if (!previous || Date.now() - previous > 60_000) {

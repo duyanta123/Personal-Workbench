@@ -27,12 +27,6 @@ export function pickEviction(avatars: AvatarLike[]): string | null {
   return sorted.find((a) => !a.isActive)?.id ?? null
 }
 
-/** 把存储路径拼成公开可访问的完整 URL */
-export function avatarUrl(path: string, baseUrl: string): string {
-  const p = path.startsWith('/') ? path : `/${path}`
-  return `${baseUrl}/storage/v1/object/public/avatars${p}`
-}
-
 /** 图片压缩：等比缩到指定边长以内，输出 WebP Blob */
 export function compressImage(file: File, maxSize = 256): Promise<Blob> {
   return new Promise((resolve, reject) => {

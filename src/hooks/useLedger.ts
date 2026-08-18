@@ -283,7 +283,7 @@ export function useSwitchLedgerCurrency() {
       if (!userId) throw new Error('未登录')
       if (!navigator.onLine) throw new Error('切换账本币种需要联网')
       const sync = await refreshSyncState(userId)
-      const { data, error } = await supabase!.rpc('switch_ledger_currency', { p_command_id: crypto.randomUUID(), p_restore_epoch: sync.restore_epoch, p_currency: currency })
+      const { data, error } = await supabase!.rpc('set_ledger_base_currency_v2', { p_command_id: crypto.randomUUID(), p_restore_epoch: sync.restore_epoch, p_currency: currency })
       if (error) throw error
       return rpcRecord(data, 'ledger currency switch')
     },

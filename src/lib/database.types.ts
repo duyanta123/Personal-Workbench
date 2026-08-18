@@ -110,6 +110,7 @@ export interface Database {
       create_ledger_transaction: Rpc<{ p_command_id: string; p_restore_epoch: number; p_entry_id: string; p_entry: Json; p_splits?: Json }>
       reconcile_ledger_account: Rpc<{ p_command_id: string; p_restore_epoch: number; p_reconciliation_id: string; p_account_id: string; p_statement_date: string; p_balance_minor: number; p_entry_ids: string[] }>
       switch_ledger_currency: Rpc<{ p_command_id: string; p_restore_epoch: number; p_currency: string }>
+      set_ledger_base_currency_v2: Rpc<{ p_command_id: string; p_restore_epoch: number; p_currency: string }>
       suggest_ledger_recurrences: Rpc<{ p_today: string }>
     }
     Enums: Record<string, never>

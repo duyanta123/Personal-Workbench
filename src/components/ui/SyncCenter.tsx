@@ -1,8 +1,12 @@
-import { AlertTriangle, CheckCircle2, Clock3, RefreshCw, WifiOff, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock3, Download, RefreshCw, WifiOff, X } from 'lucide-react'
 import { useCommandSync } from '../../hooks/useCommandSync'
 import { useOnline } from '../../hooks/useOnline'
 import Button from './Button'
 import Modal from './Modal'
+import { useAuth } from '../../hooks/useAuth'
+import { getCachedSyncState } from '../../lib/outbox'
+import { buildSyncDiagnostics } from '../../lib/syncDiagnostics'
+import { downloadFile } from '../../utils/export'
 
 const STATUS_LABEL = {
   pending: '等待同步', syncing: '正在同步', conflict: '需要处理', failed: '同步失败', stale: '恢复后失效', resolved: '已解决'
@@ -10,8 +14,15 @@ const STATUS_LABEL = {
 
 export default function SyncCenter({ open, onClose }: { open: boolean; onClose: () => void }) {
   const online = useOnline()
+  const { userId } = useAuth()
   const state = useCommandSync()
   const active = state.commands.filter((command) => command.status !== 'resolved')
+
+  async function downloadDiagnostics() {
+    const syncState = userId ? await getCachedSyncState(userId) : null
+    const payload = buildSyncDiagnostics({ online, commands: state.commands, metadata: state.metadata, syncState })
+    downloadFile(`工作台同步诊断-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(payload, null, 2), 'application/json')
+  }
 
   return (
     <Modal open={open} onClose={onClose} title="同步中心" panelClassName="max-w-2xl">
@@ -29,6 +40,9 @@ export default function SyncCenter({ open, onClose }: { open: boolean; onClose: 
             <p className="text-xs text-ink-2">{active.length} 条待处理操作</p>
             <Button size="sm" variant="secondary" disabled={!online || state.syncing} onClick={() => void state.sync()}>
               <RefreshCw size={14} className={state.syncing ? 'animate-spin' : ''} />{state.syncing ? '同步中…' : '立即重试'}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => void downloadDiagnostics()}>
+              <Download size={14} />导出诊断
             </Button>
           </div>
           {active.length === 0 ? (

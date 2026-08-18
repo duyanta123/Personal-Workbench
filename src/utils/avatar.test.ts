@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { avatarUrl, pickEviction, validateAvatarFile, MAX_AVATARS } from './avatar'
+import { pickEviction, validateAvatarFile, MAX_AVATARS } from './avatar'
 
 describe('validateAvatarFile', () => {
   it('接受常见图片格式', () => {
@@ -57,19 +57,5 @@ describe('pickEviction', () => {
 
   it('上限与全局常量一致', () => {
     expect(MAX_AVATARS).toBe(5)
-  })
-})
-
-describe('avatarUrl', () => {
-  it('拼接公开存储 URL', () => {
-    expect(avatarUrl('u1/abc.webp', 'https://x.supabase.co')).toBe(
-      'https://x.supabase.co/storage/v1/object/public/avatars/u1/abc.webp'
-    )
-  })
-
-  it('路径已含反斜杠时不重复拼接', () => {
-    expect(avatarUrl('/u1/abc.webp', 'https://x.supabase.co')).toBe(
-      'https://x.supabase.co/storage/v1/object/public/avatars/u1/abc.webp'
-    )
   })
 })

@@ -9,8 +9,10 @@ import { AuthProvider } from './hooks/useAuth'
 import QueryPersistence from './components/QueryPersistence'
 import ChunkErrorBoundary from './components/ChunkErrorBoundary'
 import PwaUpdatePrompt from './components/PwaUpdatePrompt'
+import { initMonitoring } from './lib/monitoring'
 import './index.css'
 
+initMonitoring()
 useThemeStore.getState().init()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
