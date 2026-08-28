@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { checkAppendOnlyMigrations, checkDeferredMigrations, checkLocalMigrations, parseMigrationList } from './migration-list.mjs'
 
@@ -48,6 +48,16 @@ function readMigrationsAtRef(ref) {
     .sort()
 }
 
+function readDeferredMigrationsAtRef(ref) {
+  const output = gitOutput(['ls-tree', '-r', '--name-only', ref, '--', 'supabase/deferred_migrations'])
+  if (output === null) return null
+  return output
+    .split(/\r?\n/)
+    .filter((line) => line.endsWith('.sql'))
+    .map((line) => basename(line))
+    .sort()
+}
+
 function readChangedMigrations(ref) {
   const output = gitOutput(['diff', '--name-only', ref, '--', 'supabase/migrations'])
   if (output === null) return null
@@ -55,6 +65,30 @@ function readChangedMigrations(ref) {
     .split(/\r?\n/)
     .filter((line) => line.endsWith('.sql'))
     .map((line) => basename(line))
+}
+
+const MIGRATION_REPAIRS = new Map([
+  ['20260817000001_phase1_security_foundation.sql', {
+    before: "where query ~* ('(^|[^a-z0-9_])' || v_name || '[[:space:]]*\\\\(');",
+    after: "where query ~* ('(^|[^a-z0-9_])' || v_name || '[[:space:]]*[(]');"
+  }]
+])
+
+function isApprovedMigrationRepair(name, baseRef) {
+  const repair = MIGRATION_REPAIRS.get(name)
+  if (!repair) return false
+  const baseline = gitOutput(['show', `${baseRef}:supabase/migrations/${name}`])
+  if (baseline === null) return false
+  let current
+  try {
+    current = readFileSync(join(process.cwd(), 'supabase', 'migrations', name), 'utf8')
+  } catch {
+    return false
+  }
+  const normalize = (value) => value.replace(/\r\n/g, '\n')
+  const expectedBaseline = normalize(baseline)
+  const expectedCurrent = expectedBaseline.replace(repair.before, repair.after)
+  return expectedCurrent !== expectedBaseline && normalize(current) === expectedCurrent
 }
 
 function checkLocalOnly() {
@@ -78,17 +112,23 @@ function checkLocalOnly() {
   const configuredBaseRef = process.env.MIGRATION_BASE_REF
   const baseRef = configuredBaseRef && !/^0+$/.test(configuredBaseRef) ? configuredBaseRef : configuredBaseRef ? 'HEAD^' : 'HEAD'
   const baseline = readMigrationsAtRef(baseRef)
+  const baselineDeferred = readDeferredMigrationsAtRef(baseRef)
   const changed = readChangedMigrations(baseRef)
-  if (baseline === null || changed === null) {
+  if (baseline === null || baselineDeferred === null || changed === null) {
     const message = `Unable to read append-only migration baseline from ${baseRef}`
     if (process.env.CI || process.env.MIGRATION_BASE_REF) errors.push(message)
     else console.warn(`${message}; skipped outside CI.`)
   } else {
-    errors.push(...checkAppendOnlyMigrations(names, baseline))
+    // A deferred migration may be promoted into the committed directory once
+    // its rollout gate is met. That is an allowed rename, not an insertion of
+    // historical SQL; all other new files must still follow the committed tail.
+    errors.push(...checkAppendOnlyMigrations(names, baseline, baselineDeferred))
     const baselineSet = new Set(baseline)
     for (const name of changed) {
       if (baselineSet.has(name) && names.includes(name)) {
-        errors.push(`Committed migration was modified: ${name}`)
+        if (!isApprovedMigrationRepair(name, baseRef)) {
+          errors.push(`Committed migration was modified: ${name}`)
+        }
       }
     }
   }

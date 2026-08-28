@@ -102,6 +102,19 @@ test('rejects a committed migration inserted before the target-branch tail', () 
   assert.match(errors[0], /Historical migration inserted/)
 })
 
+test('accepts promoting a deferred migration into the committed directory', () => {
+  const baseline = [
+    '20260813000001_init.sql',
+    '20260816000006_search.sql'
+  ]
+  const promoted = ['20260811000001_private_avatars.sql']
+  assert.deepEqual(checkAppendOnlyMigrations([
+    '20260811000001_private_avatars.sql',
+    ...baseline,
+    '20260817000001_next.sql'
+  ], baseline, promoted), [])
+})
+
 test('rejects removing or renaming a target-branch migration', () => {
   const baseline = [
     '20260813000001_init.sql',

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select extensions.plan(11);
+select extensions.plan(12);
 
 select extensions.is((select public from storage.buckets where id='avatars'),false,'avatar bucket is private');
 select extensions.ok(pg_catalog.has_function_privilege('authenticated','public.set_ledger_base_currency_v2(uuid,bigint,text)','EXECUTE'),'authenticated can set empty-ledger currency');
@@ -25,6 +25,7 @@ reset role;
 
 select extensions.is((select count(*) from private.legacy_rpc_usage_daily where observed_on=current_date),9::bigint,'snapshot records all legacy RPCs');
 select extensions.ok((select bool_and(coverage_valid) from private.legacy_rpc_usage_daily where observed_on=current_date),'initial observation is valid');
+select extensions.lives_ok($$select private.snapshot_legacy_rpc_usage()$$,'legacy RPC usage snapshot can be refreshed without regex errors');
 select extensions.ok(exists(select 1 from cron.job where jobname='workbench-legacy-rpc-usage-daily'),'snapshot is scheduled daily');
 select * from extensions.finish();
 rollback;

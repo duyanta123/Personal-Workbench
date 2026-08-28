@@ -152,7 +152,7 @@ begin
   ] loop
     select coalesce(pg_catalog.sum(calls), 0)::bigint into v_calls
     from extensions.pg_stat_statements
-    where query ~* ('(^|[^a-z0-9_])' || v_name || '[[:space:]]*\\(');
+    where query ~* ('(^|[^a-z0-9_])' || v_name || '[[:space:]]*[(]');
     select * into v_previous from private.legacy_rpc_usage_daily
       where rpc_name = v_name and observed_on < p_observed_on order by observed_on desc limit 1;
     insert into private.legacy_rpc_usage_daily(

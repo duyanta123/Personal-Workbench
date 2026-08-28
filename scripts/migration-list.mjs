@@ -88,12 +88,13 @@ export function checkLocalMigrations(names, now = new Date()) {
   return errors
 }
 
-export function checkAppendOnlyMigrations(names, baselineNames) {
+export function checkAppendOnlyMigrations(names, baselineNames, promotedNames = []) {
   if (baselineNames.length === 0) return []
 
   const errors = []
   const current = new Set(names)
   const baseline = new Set(baselineNames)
+  const promoted = new Set(promotedNames)
   const lastBaselineName = baselineNames.at(-1)
   const lastBaselineVersion = lastBaselineName?.match(MIGRATION_FILE_NAME)?.[1] ?? ''
 
@@ -105,6 +106,7 @@ export function checkAppendOnlyMigrations(names, baselineNames) {
 
   for (const name of names) {
     if (baseline.has(name)) continue
+    if (promoted.has(name)) continue
     const version = name.match(MIGRATION_FILE_NAME)?.[1] ?? ''
     if (version && lastBaselineVersion && version <= lastBaselineVersion) {
       errors.push(`Historical migration inserted: ${name} does not follow committed ${lastBaselineName}`)

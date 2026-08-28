@@ -36,6 +36,6 @@ revoke insert, update, delete on table
 from authenticated;
 
 -- body_metrics：前端写路径（useUpsertBodyMetric/useDeleteBodyMetric）已走 V2 命令，
--- 但此前不在任何 revoke 清单中（INSERT/UPDATE/DELETE 均保留），是唯一遗漏的收口表。
+-- 因此撤销全部直接写权限。
 revoke insert, update, delete on table public.body_metrics
 from authenticated;
