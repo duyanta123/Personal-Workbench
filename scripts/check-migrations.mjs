@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { checkAppendOnlyMigrations, checkLocalMigrations, parseMigrationList } from './migration-list.mjs'
+import { checkAppendOnlyMigrations, checkDeferredMigrations, checkLocalMigrations, parseMigrationList } from './migration-list.mjs'
 
 function gitOutput(args) {
   try {
@@ -61,6 +61,18 @@ function checkLocalOnly() {
   const dir = join(process.cwd(), 'supabase', 'migrations')
   const names = readdirSync(dir).filter((name) => name.endsWith('.sql')).sort()
   const errors = checkLocalMigrations(names)
+
+  let deferredNames = []
+  try {
+    deferredNames = readdirSync(join(process.cwd(), 'supabase', 'deferred_migrations'))
+      .filter((name) => name.endsWith('.sql'))
+      .sort()
+  } catch {
+    deferredNames = []
+  }
+  const deferred = checkDeferredMigrations(deferredNames, names)
+  errors.push(...deferred.errors)
+  for (const warning of deferred.warnings) console.warn(warning)
 
   // CI supplies the target-branch/push predecessor SHA. Local runs compare against HEAD.
   const configuredBaseRef = process.env.MIGRATION_BASE_REF

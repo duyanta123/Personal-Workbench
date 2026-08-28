@@ -113,3 +113,37 @@ export function checkAppendOnlyMigrations(names, baselineNames) {
 
   return errors
 }
+
+// 延迟迁移（supabase/deferred_migrations/）尚未应用，版本号不得与已提交迁移重复；
+// 版本早于最新已提交迁移时仅告警——发布移入前必须重命名为新的 UTC 时间戳，
+// 否则会违反追加式迁移的严格递增约束。
+export function checkDeferredMigrations(deferredNames, appliedNames) {
+  const errors = []
+  const warnings = []
+  const appliedVersions = new Map()
+  for (const name of appliedNames) {
+    const version = name.match(MIGRATION_FILE_NAME)?.[1]
+    if (version) appliedVersions.set(version, name)
+  }
+  const latestAppliedVersion = [...appliedVersions.keys()].sort().at(-1) ?? null
+
+  const seen = new Map()
+  for (const name of deferredNames) {
+    const version = name.match(MIGRATION_FILE_NAME)?.[1]
+    if (!version) {
+      errors.push(`Invalid deferred migration file name: ${name}`)
+      continue
+    }
+    if (seen.has(version)) {
+      errors.push(`Duplicate deferred migration timestamp ${version}: ${seen.get(version)} and ${name}`)
+      continue
+    }
+    seen.set(version, name)
+    if (appliedVersions.has(version)) {
+      errors.push(`Deferred migration ${name} reuses committed migration timestamp ${version} (${appliedVersions.get(version)}); rename it to a fresh timestamp`)
+    } else if (latestAppliedVersion && version <= latestAppliedVersion) {
+      warnings.push(`Deferred migration ${name} predates latest committed ${appliedVersions.get(latestAppliedVersion)}; rename it to a fresh timestamp when moving it into supabase/migrations/`)
+    }
+  }
+  return { errors, warnings }
+}

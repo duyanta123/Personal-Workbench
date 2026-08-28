@@ -29,7 +29,7 @@ select extensions.is(
       'pomodoro_sessions', 'user_avatars', 'body_metrics',
       'inbox_items', 'recurrence_rules', 'ledger_accounts', 'ledger_payees',
       'ledger_rules', 'ledger_splits', 'ledger_reconciliations',
-      'workbench_templates', 'saved_views', 'entity_links'
+      'workbench_templates', 'saved_views', 'entity_links', 'user_preferences'
     ]) as tbl
     cross join unnest(array['INSERT', 'UPDATE', 'DELETE']) as priv
     where pg_catalog.has_table_privilege('authenticated', pg_catalog.format('public.%I', tbl), priv)

@@ -12,4 +12,24 @@ describe('monitoring redaction', () => {
     expect(redactMonitoringValue('https://example.test/path?token=secret#x', 'requestUrl'))
       .toBe('https://example.test/path')
   })
+
+  it('filters JWT-shaped values and endpoint query parameters', () => {
+    expect(redactMonitoringValue('eyJhbGciOiJIUzI1NiJ9.payload.signature', 'accessToken')).toBe('[Filtered]')
+    expect(redactMonitoringValue('https://push.test/notify?secret=hidden', 'endpoint')).toBe('https://push.test/notify')
+  })
+
+  it('filters free-form message and command fields', () => {
+    expect(redactMonitoringValue({ message: 'private body', command: { note: 'secret' }, rpc: 'safe' }))
+      .toEqual({ message: '[Filtered]', command: '[Filtered]', rpc: 'safe' })
+  })
+
+  it('keeps non-sensitive sync telemetry fields', () => {
+    expect(redactMonitoringValue({
+      rpc: 'finalize_restore', error_category: 'rpc', recovery_stage: 'finalize_restore',
+      restore_epoch: 3, queue_count: 2
+    })).toEqual({
+      rpc: 'finalize_restore', error_category: 'rpc', recovery_stage: 'finalize_restore',
+      restore_epoch: 3, queue_count: 2
+    })
+  })
 })

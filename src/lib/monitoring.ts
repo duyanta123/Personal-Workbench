@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/react'
 
-const SENSITIVE_KEY = /(?:token|authorization|password|secret|email|body|note|amount|payload|query|text|title|signed)/i
+const SENSITIVE_KEY = /(?:token|authorization|password|secret|email|body|note|amount|payload|query|text|title|signed|message|description|command)/i
+const JWT_VALUE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
 
 function safeUrl(value: string) {
   try {
@@ -14,7 +15,11 @@ function safeUrl(value: string) {
 export function redactMonitoringValue(value: unknown, key = '', depth = 0): unknown {
   if (SENSITIVE_KEY.test(key)) return '[Filtered]'
   if (depth > 5) return '[Truncated]'
-  if (typeof value === 'string') return key.toLowerCase().includes('url') ? safeUrl(value) : value.slice(0, 500)
+  if (typeof value === 'string') {
+    if (JWT_VALUE.test(value)) return '[Filtered]'
+    if (/(?:url|uri|href|endpoint)/i.test(key) || /^https?:\/\//i.test(value)) return safeUrl(value)
+    return value.slice(0, 500)
+  }
   if (Array.isArray(value)) return value.slice(0, 50).map((item) => redactMonitoringValue(item, '', depth + 1))
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
@@ -32,6 +37,8 @@ export function initMonitoring() {
     release: import.meta.env.VITE_APP_RELEASE,
     sendDefaultPii: false,
     tracesSampleRate: import.meta.env.PROD ? 0.05 : 0,
+    replaysSessionSampleRate: 0,
+    replaysOnErrorSampleRate: 0,
     integrations: [Sentry.browserTracingIntegration()],
     beforeSend(event) {
       event.user = undefined
@@ -43,6 +50,14 @@ export function initMonitoring() {
       event.contexts = redactMonitoringValue(event.contexts) as typeof event.contexts
       event.tags = redactMonitoringValue(event.tags) as typeof event.tags
       if (event.breadcrumbs) event.breadcrumbs = redactMonitoringValue(event.breadcrumbs) as typeof event.breadcrumbs
+      if (event.message) event.message = '[Filtered]'
+      if (event.logentry) event.logentry = { ...event.logentry, message: '[Filtered]' }
+      if (event.exception?.values) {
+        event.exception = {
+          ...event.exception,
+          values: event.exception.values.map((value) => ({ ...value, value: '[Filtered]' }))
+        }
+      }
       return event
     }
   })

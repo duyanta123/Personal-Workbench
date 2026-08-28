@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { checkAppendOnlyMigrations, checkLocalMigrations, parseMigrationList } from './migration-list.mjs'
+import { checkAppendOnlyMigrations, checkDeferredMigrations, checkLocalMigrations, parseMigrationList } from './migration-list.mjs'
 
 test('parses structured Supabase migration output', () => {
   assert.deepEqual(parseMigrationList(`Initialising login role...\n${JSON.stringify({
@@ -113,4 +113,47 @@ test('rejects removing or renaming a target-branch migration', () => {
   ], baseline)
   assert.equal(errors.length, 1)
   assert.match(errors[0], /removed or renamed/)
+})
+
+test('accepts deferred migrations newer than every committed migration', () => {
+  const result = checkDeferredMigrations(
+    ['20260817000001_lockdown.sql'],
+    ['20260813000001_init.sql', '20260816000006_search.sql']
+  )
+  assert.deepEqual(result.errors, [])
+  assert.deepEqual(result.warnings, [])
+})
+
+test('rejects a deferred migration reusing a committed timestamp', () => {
+  const result = checkDeferredMigrations(
+    ['20260816000006_lockdown.sql'],
+    ['20260816000006_search.sql']
+  )
+  assert.equal(result.errors.length, 1)
+  assert.match(result.errors[0], /reuses committed migration timestamp/)
+})
+
+test('rejects duplicate timestamps among deferred migrations', () => {
+  const result = checkDeferredMigrations(
+    ['20260817000001_a.sql', '20260817000001_b.sql'],
+    []
+  )
+  assert.equal(result.errors.length, 1)
+  assert.match(result.errors[0], /Duplicate deferred migration timestamp/)
+})
+
+test('warns without failing when a deferred migration predates the committed tail', () => {
+  const result = checkDeferredMigrations(
+    ['20260811000002_lockdown.sql'],
+    ['20260813000001_init.sql', '20260816000006_search.sql']
+  )
+  assert.deepEqual(result.errors, [])
+  assert.equal(result.warnings.length, 1)
+  assert.match(result.warnings[0], /rename it to a fresh timestamp/)
+})
+
+test('rejects invalid deferred migration file names', () => {
+  const result = checkDeferredMigrations(['notes.sql'], [])
+  assert.equal(result.errors.length, 1)
+  assert.match(result.errors[0], /Invalid deferred migration file name/)
 })
