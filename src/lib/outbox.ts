@@ -1,7 +1,8 @@
 import { supabase } from './supabase'
 import type { Json } from './database.types'
 import type { NoteLayout, PracticeDifficulty, PracticeStatus, Priority } from '../types'
-import { deleteLocalValue, getLocalValue, listLocalValues, localKeys, setLocalValue } from './localData'
+import { deleteLocalValue, listLocalValues, localKeys, setLocalValue } from './localData'
+import { getCachedSyncState, isNetworkError, refreshSyncState, type SyncState } from './syncCore'
 
 export type WorkbenchOperationKind =
   | 'todo.create'
@@ -28,11 +29,6 @@ export interface WorkbenchOperationPayloads {
   'workout_exercise.create': { session_id: string; name: string; sets: number; reps: number; weight: number; note: string | null }
   'pomodoro.complete': { date: string; minutes: number }
   'avatar.register': { path: string }
-}
-
-export interface SyncState {
-  revision: number
-  restore_epoch: number
 }
 
 interface PendingOperationBase {
@@ -69,35 +65,8 @@ const localFlushes = new Map<string, Promise<FlushResult>>()
 /** V1 上限与 V2 对齐；该协议已停止新增调用方（见 ADR 0004）。 */
 const MAX_PENDING_OPERATIONS = 1000
 
-function isNetworkError(error: unknown) {
-  const message = error instanceof Error ? error.message : String((error as { message?: unknown })?.message ?? error)
-  return /fetch|abort|network|timeout|offline|failed to fetch/i.test(message)
-}
-
-function validSyncState(value: unknown): value is SyncState {
-  const state = value as Partial<SyncState> | null
-  return Boolean(state)
-    && Number.isSafeInteger(state?.revision) && Number(state?.revision) >= 0
-    && Number.isSafeInteger(state?.restore_epoch) && Number(state?.restore_epoch) >= 0
-}
-
-export async function refreshSyncState(userId: string): Promise<SyncState> {
-  if (!supabase) throw new Error('Supabase 未配置')
-  const { data, error } = await supabase.rpc('get_user_sync_state')
-  if (error) throw error
-  if (!validSyncState(data)) throw new Error('服务端同步状态无效')
-  await setLocalValue(userId, localKeys.syncState, data)
-  return data
-}
-
-export async function getCachedSyncState(userId: string): Promise<SyncState | null> {
-  try {
-    const value = await getLocalValue<unknown>(userId, localKeys.syncState)
-    return validSyncState(value) ? value : null
-  } catch {
-    return null
-  }
-}
+export { getCachedSyncState, isNetworkError, refreshSyncState }
+export type { SyncState }
 
 async function requireSyncState(userId: string): Promise<SyncState> {
   if (navigator.onLine) {
@@ -269,5 +238,3 @@ export async function discardPendingOperations(userId: string) {
   await Promise.all(records.map((record) => deleteLocalValue(userId, record.key)))
   window.dispatchEvent(new CustomEvent('workbench:outbox-changed', { detail: userId }))
 }
-
-export { isNetworkError }

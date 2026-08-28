@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { flushOutbox, refreshSyncState } from '../lib/outbox'
+import { flushOutbox } from '../lib/outbox'
+import { refreshSyncState } from '../lib/syncCore'
 import { useToastStore } from '../stores/toast'
 import { useAuth } from './useAuth'
 

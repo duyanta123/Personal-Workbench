@@ -6,7 +6,7 @@ import type { LedgerAccount, LedgerEntry, LedgerPayee, LedgerReconciliation, Led
 import { useAuth } from './useAuth'
 import { validateLedgerCreate } from '../utils/createValidation'
 import { parseMoneyToMinor } from '../utils/money'
-import { refreshSyncState } from '../lib/outbox'
+import { refreshSyncState } from '../lib/syncCore'
 import type { Json } from '../lib/database.types'
 import { rpcRecord } from '../lib/rpcSchemas'
 

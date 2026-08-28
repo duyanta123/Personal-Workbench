@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "capturedFrom": "phase2-hardening-2026-08-19",
+  "notes": "Phase 3 may not regress these budgets without an independent approval commit.",
+  "navigation": {
+    "firstContentfulPaintMs": 2500,
+    "largestContentfulPaintMs": 3500,
+    "supabaseRequestsBeforeInteractive": 24
+  },
+  "bundle": {
+    "baselineFile": "config/bundle-budget.json",
+    "totalGzipGrowthPercent": 10,
+    "existingChunkGrowthPercent": 15
+  }
+}

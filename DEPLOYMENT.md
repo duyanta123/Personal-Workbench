@@ -8,15 +8,18 @@
 
 `supabase/deferred_migrations/` 中的 SQL 不会被常规 `supabase db reset` 或 `supabase db push` 自动执行。按以下顺序发布：
 
-1. 先发布当前前端和核心迁移，确认签名头像 URL、IndexedDB 头像缓存、outbox 与新操作 RPC 正常工作。
-2. 前端稳定后，把 `20260811000001_private_avatars.sql` 原样移入 `supabase/migrations/`，经 CI 后发布，从而关闭头像公开读取。
-3. 至少观察一个完整发布周期，并确认旧恢复、番茄和写入 RPC 连续 30 天无调用；然后把 `20260811000002_post_rollout_lockdown.sql` 原样移入 `supabase/migrations/`，经 CI 后发布最终撤权。
+1. 先提交并发布 `database.types.ts` 的漂移语义注释基线，再记录生产 SHA、迁移历史、行数、头像对象清单和账本本位币。
+2. 签名头像 URL、IndexedDB Blob 缓存和 4 分钟续签已在前端上线；直接发布 `20260811000001_private_avatars.sql`，验证上传、切换、删除、离线缓存和跨用户拒绝后删除旧公开直链测试工具。
+3. 配置 Vault 中的 `workbench_send_reminders_url`/`workbench_scheduler_secret`、Edge Function 的 VAPID 密钥、Sentry DSN 和 S3/age 公钥。生产 age 私钥只离线保存。
+4. 使用 `private.legacy_rpc_usage_daily` 连续取得 30 天无缺口、无调用、无 stats_reset 的证据，再发布 `post_rollout_lockdown`；偏好 V2 发布并稳定一个周期后再发布 `core_write_lockdown`（其中包含 `user_preferences` 撤权）。
 
 不得直接在生产 SQL 控制台执行延迟文件，否则 Supabase 迁移历史不会记录该变更。CI 会临时复制并从零执行延迟迁移，同时运行 `supabase/deferred_tests/`，因此延迟 SQL 的语法和最终权限状态仍在合并前受验证。
 
 ## Vercel
 
 仓库根目录的 `vercel.json` 已提供 SPA 回退和安全头。`index.html`、`sw.js` 不应长期缓存，带内容哈希的 `/assets/*` 可永久缓存。
+
+Sentry 发布追踪依赖构建期环境变量 `VITE_APP_RELEASE`：Vercel 项目环境变量中将 `VITE_APP_RELEASE` 设为 `VERCEL_GIT_COMMIT_SHA` 的系统变量引用；CI 构建由 workflow 注入 `github.sha`。未设置时事件不携带 release，不影响运行。
 
 ## Netlify
 
@@ -32,3 +35,13 @@
 - 404 回源或错误页返回 `index.html`，HTTP 状态按平台能力设为 200
 
 发布新版本时先上传带哈希资源，再上传 `index.html` 和 Service Worker，避免旧页面引用的资源提前消失。
+
+## Phase 2 运行时配置
+
+- `VITE_VAPID_PUBLIC_KEY` 只放公钥；`VAPID_SUBJECT`、`VAPID_PUBLIC_KEY`、`VAPID_PRIVATE_KEY` 和 `WORKBENCH_SCHEDULER_SECRET` 仅配置在 `send-reminders` Edge Function secrets。
+- 在 Supabase Vault 写入 `workbench_send_reminders_url` 和 `workbench_scheduler_secret`，`pg_cron + pg_net` 每 5 分钟创建 run ID 并调用 Edge Function；不要改用 GitHub Actions 定时器。
+- `vite-plugin-pwa` 已使用 `injectManifest`；发布前执行旧 generateSW 构建离线启动→升级新 SW 的浏览器测试，确保预缓存清单和 `/share` 行为不变。
+
+## 备份
+
+生产每日备份和季度真实恢复按 [`docs/backup-runbook.md`](docs/backup-runbook.md) 执行。CI 的 `npm run backup:drill` 只使用测试 age 密钥和 S3 drill 前缀，绝不读取生产私钥。

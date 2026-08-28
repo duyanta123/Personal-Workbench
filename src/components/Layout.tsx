@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   BarChart3,
@@ -34,10 +34,7 @@ import IconButton from './ui/IconButton'
 import AvatarPicker from './ui/AvatarPicker'
 import ToastHost from './ui/ToastHost'
 import GlobalSearch from './ui/GlobalSearch'
-import DataManager from './ui/DataManager'
 import QuickCaptureDialog from './ui/QuickCaptureDialog'
-import SyncCenter from './ui/SyncCenter'
-import SecuritySettings from './ui/SecuritySettings'
 import SearchFocusBanner from './ui/SearchFocusBanner'
 import Modal from './ui/Modal'
 import { cancelAllPendingDeletes } from '../hooks/useDeferredDelete'
@@ -51,6 +48,11 @@ import { clearPomodoroRuntime } from '../utils/pomodoroRuntime'
 import { queryClient } from '../lib/queryClient'
 import { useQuickCaptureShortcut } from '../hooks/useQuickCaptureShortcut'
 import { useRecurrenceMaterialization } from '../hooks/useRecurrences'
+import { useCommandSync } from '../hooks/useCommandSync'
+
+const DataManager = lazy(() => import('./ui/DataManager'))
+const SyncCenter = lazy(() => import('./ui/SyncCenter'))
+const SecuritySettings = lazy(() => import('./ui/SecuritySettings'))
 
 interface NavItem {
   to: string
@@ -77,6 +79,10 @@ const GROUPS = ['工作台', '记录']
 export default function Layout() {
   useAvatarStorageReconciliation()
   useOutboxSync()
+  // Keep the V2 command sync lifecycle mounted for the entire authenticated
+  // shell.  SyncCenter is lazy-loaded, so mounting the hook there would stop
+  // flushing commands while the dialog is closed (especially after reconnect).
+  const commandSync = useCommandSync()
   useRecurrenceMaterialization()
   const online = useOnline()
   const drawerOpen = useUiStore((s) => s.drawerOpen)
@@ -495,9 +501,11 @@ export default function Layout() {
       {/* 全局浮层 */}
       <ToastHost />
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
-      <DataManager open={dataOpen} onClose={() => setDataOpen(false)} />
-      <SyncCenter open={syncOpen} onClose={() => setSyncOpen(false)} />
-      <SecuritySettings open={securityOpen} onClose={() => setSecurityOpen(false)} />
+      <Suspense fallback={null}>
+        {dataOpen && <DataManager open onClose={() => setDataOpen(false)} />}
+        {syncOpen && <SyncCenter open onClose={() => setSyncOpen(false)} state={commandSync} />}
+        {securityOpen && <SecuritySettings open onClose={() => setSecurityOpen(false)} />}
+      </Suspense>
       <QuickCaptureDialog />
     </div>
   )

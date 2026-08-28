@@ -12,10 +12,8 @@ import {
   Pin,
   PinOff,
   Pencil,
-  Plus,
   Search,
   Trash2,
-  X
 } from 'lucide-react'
 import {
   useAddTodo,
@@ -23,7 +21,6 @@ import {
   useMoveTodo,
   usePostponeTodo,
   useTodoById,
-  useTodoHistory,
   useTodoStats,
   useTodos,
   useToggleTodo,
@@ -36,20 +33,15 @@ import type { TodoListFilters, TodoPage } from '../hooks/useTodos'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
 import { useTouch } from '../hooks/useTouch'
 import { useToastStore } from '../stores/toast'
-import { dateStr } from '../utils/date'
 import type { Priority, Todo } from '../types'
 import { useAuth } from '../hooks/useAuth'
-import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
-import Segmented from '../components/ui/Segmented'
 import Progress from '../components/ui/Progress'
 import Skeleton from '../components/ui/Skeleton'
 import EmptyState from '../components/ui/EmptyState'
 import PageHeader from '../components/ui/PageHeader'
 import IconButton from '../components/ui/IconButton'
-import Ring from '../components/ui/Ring'
-import SideCard from '../components/ui/SideCard'
 import { cn } from '../lib/cn'
 import QueryError from '../components/ui/QueryError'
 import { useSearchParams } from 'react-router-dom'
@@ -57,61 +49,13 @@ import { useCurrentDate } from '../hooks/useCurrentDate'
 import { useClampPage } from '../hooks/useClampPage'
 import RecurrencePanel from '../components/ui/RecurrencePanel'
 import TodoArtifactsPanel, { type TodoViewState } from '../components/ui/TodoArtifactsPanel'
-import EntityLinksPanel from '../components/ui/EntityLinksPanel'
-
-const LEVEL_META: Record<Priority, { label: string; variant: 'danger' | 'warning' | 'accent' }> = {
-  high: { label: '高', variant: 'danger' },
-  mid: { label: '中', variant: 'warning' },
-  low: { label: '低', variant: 'accent' }
-}
-
-const LEVEL_OPTIONS = (Object.keys(LEVEL_META) as Priority[]).map((lv) => ({
-  value: lv,
-  label: `${LEVEL_META[lv].label}优先级`
-}))
-
-const POSTPONE_OPTIONS = [
-  { days: 1, label: '1 天' },
-  { days: 7, label: '1 周' },
-  { days: 30, label: '1 月' }
-] as const
-
-const HISTORY_ACTION_LABELS: Record<string, string> = {
-  done: '完成',
-  skipped: '跳过',
-  reopened: '恢复进行',
-  postponed: '延期'
-}
-
-/** 周期实例的状态历史（内联小面板） */
-function TodoHistoryInline({ todoId, onClose }: { todoId: string; onClose: () => void }) {
-  const history = useTodoHistory(todoId)
-  return (
-    <li className="rounded-2xl border border-border bg-nested px-4 py-3 text-xs text-ink-2">
-      <div className="flex items-center justify-between">
-        <span className="font-semibold text-ink">状态历史</span>
-        <button type="button" onClick={onClose} className="font-medium text-accent">关闭</button>
-      </div>
-      {history.isLoading ? (
-        <div className="mt-2 text-ink-3">加载中…</div>
-      ) : !history.data?.length ? (
-        <div className="mt-2 text-ink-3">暂无记录</div>
-      ) : (
-        <ul className="mt-2 space-y-1">
-          {history.data.map((row) => (
-            <li key={row.id} className="flex items-center gap-2 tabular-nums">
-              <span className="font-medium text-ink">{HISTORY_ACTION_LABELS[row.action] ?? row.action}</span>
-              {row.action === 'postponed' && row.from_value && row.to_value && (
-                <span>{row.from_value} → {row.to_value}</span>
-              )}
-              <span className="ml-auto text-ink-3">{row.created_at.slice(0, 16).replace('T', ' ')}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </li>
-  )
-}
+import TodoEditor from '../features/todos/TodoEditor'
+import TodoSummary from '../features/todos/TodoSummary'
+import TodoHistoryInline from '../features/todos/TodoHistoryInline'
+import TodoPostponePanel from '../features/todos/TodoPostponePanel'
+import TodoDoneSection from '../features/todos/TodoDoneSection'
+import TodoFocusPanel from '../features/todos/TodoFocusPanel'
+import { LEVEL_META } from '../features/todos/levelMeta'
 
 /** 未完成任务按 逾期 → 今天/无日期 → 未来 分组 */
 function dueMeta(t: Todo, today: string) {
@@ -286,16 +230,6 @@ export default function Todos() {
     setDue(todo.due_date ?? '')
   }
 
-  function quickDue(offset: number | null) {
-    setDue(offset === null ? '' : dateStr(offset))
-  }
-
-  const LEVEL_ROW = [
-    { key: 'high', label: '高优先级', color: 'var(--danger)' },
-    { key: 'mid', label: '中优先级', color: 'var(--m3)' },
-    { key: 'low', label: '低优先级', color: 'var(--accent)' }
-  ] as const
-
   return (
     <div className="space-y-4">
       <PageHeader
@@ -318,20 +252,10 @@ export default function Todos() {
       />
 
       {focusQuery.data && (
-        <div className="space-y-3">
-          <div className="rounded-2xl border border-accent bg-accent-2/40 p-4 shadow-card">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">搜索定位</div>
-            <div className="mt-1 text-sm font-semibold text-ink">{focusQuery.data.text}</div>
-            <button
-              type="button"
-              onClick={() => { const next = new URLSearchParams(searchParams); next.delete('focus'); setSearchParams(next, { replace: true }) }}
-              className="mt-2 text-xs font-medium text-accent"
-            >
-              关闭定位
-            </button>
-          </div>
-          <EntityLinksPanel sourceKind="todo" sourceId={focusQuery.data.id} />
-        </div>
+        <TodoFocusPanel
+          todo={focusQuery.data}
+          onClose={() => { const next = new URLSearchParams(searchParams); next.delete('focus'); setSearchParams(next, { replace: true }) }}
+        />
       )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -357,49 +281,13 @@ export default function Todos() {
           </div>
 
           {/* 添加表单 */}
-          <form onSubmit={handleAdd} className="space-y-3 rounded-2xl border border-border bg-surface p-4">
-            <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="今天要做什么？" maxLength={1000} />
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Segmented value={level} onChange={setLevel} options={LEVEL_OPTIONS} />
-                <Input
-                  type="date"
-                  value={due}
-                  onChange={(e) => setDue(e.target.value)}
-                  aria-label="截止日期"
-                  className="w-40 tabular-nums"
-                />
-                <div className="flex items-center gap-1 text-xs">
-                  {[
-                    { label: '今天', v: 0 },
-                    { label: '明天', v: 1 },
-                    { label: '清空', v: null }
-                  ].map((c) => (
-                    <button
-                      key={String(c.v)}
-                      type="button"
-                      onClick={() => quickDue(c.v)}
-                      className={cn(
-                        'rounded-full px-2.5 py-1 font-medium transition-colors',
-                        due === dateStr(c.v ?? 999)
-                          ? 'bg-accent-2 text-accent'
-                          : 'bg-nested text-ink-2 hover:bg-hover hover:text-ink'
-                      )}
-                    >
-                      {c.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex gap-2">
-              <Button type="submit" disabled={!text.trim() || addTodo.isPending || updateTodo.isPending}>
-                <Plus size={16} />
-                {editingId ? '保存' : '添加'}
-              </Button>
-              {editingId && <IconButton type="button" onClick={() => { setEditingId(null); setEditingOriginal(null); setText(''); setDue('') }} aria-label="取消编辑"><X size={16} /></IconButton>}
-              </div>
-            </div>
-          </form>
+          <TodoEditor
+            text={text} level={level} due={due} editing={Boolean(editingId)}
+            busy={addTodo.isPending || updateTodo.isPending}
+            onTextChange={setText} onLevelChange={setLevel} onDueChange={setDue}
+            onSubmit={handleAdd}
+            onCancel={() => { setEditingId(null); setEditingOriginal(null); setText(''); setDue('') }}
+          />
 
           {/* 未完成任务 */}
           {isLoading ? (
@@ -530,27 +418,17 @@ export default function Todos() {
                         </div>
                       </li>
                       {postponeId === t.id && (
-                        <li className="flex items-center gap-2 rounded-2xl border border-border bg-nested px-4 py-3 text-xs text-ink-2">
-                          <span className="font-semibold text-ink">顺延</span>
-                          {POSTPONE_OPTIONS.map((option) => (
-                            <button
-                              key={option.days}
-                              type="button"
-                              disabled={postponeTodo.isPending}
-                              onClick={() => {
-                                void postponeTodo.mutateAsync({ id: t.id, days: option.days })
-                                  .then(() => {
-                                    setPostponeId(null)
-                                    push({ kind: 'success', message: `已顺延 ${option.label}，可在状态历史中查看` })
-                                  })
-                                  .catch(() => push({ kind: 'error', message: '延期保存失败，请重试' }))
-                              }}
-                              className="rounded-full bg-surface px-2.5 py-1 font-medium text-ink-2 transition-colors hover:bg-hover hover:text-ink"
-                            >
-                              {option.label}
-                            </button>
-                          ))}
-                        </li>
+                        <TodoPostponePanel
+                          pending={postponeTodo.isPending}
+                          onPostpone={(days, label) => {
+                            void postponeTodo.mutateAsync({ id: t.id, days })
+                              .then(() => {
+                                setPostponeId(null)
+                                push({ kind: 'success', message: `已顺延 ${label}，可在状态历史中查看` })
+                              })
+                              .catch(() => push({ kind: 'error', message: '延期保存失败，请重试' }))
+                          }}
+                        />
                       )}
                       {historyId === t.id && <TodoHistoryInline todoId={t.id} onClose={() => setHistoryId(null)} />}
                       </Fragment>
@@ -561,52 +439,18 @@ export default function Todos() {
 
               {/* 已完成（可折叠） */}
               {doneCount > 0 && (
-                <div className="rounded-2xl border border-border bg-surface">
-                  <button
-                    onClick={() => setViewState((current) => ({ ...current, showDone: !current.showDone }))}
-                    className="flex w-full items-center justify-between px-4 py-3 text-xs font-medium text-ink-2 transition-colors hover:text-ink"
-                  >
-                    <span>
-                      已完成 <span className="tabular-nums">{showDone ? doneList.length : doneCount}</span>
-                    </span>
-                    <ChevronDown
-                      size={16}
-                      className={cn('transition-transform duration-150', showDone && 'rotate-180')}
-                    />
-                  </button>
-                  {showDone && (
-                    <ul className="space-y-1 px-2 pb-2">
-                      {doneList.map((t) => (
-                        <li
-                          key={t.id}
-                          className="group flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-hover"
-                        >
-                          <button
-                            onClick={() => handleToggle(t)}
-                            disabled={isDeletePending(t.id)}
-                            aria-label="恢复未完成"
-                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-m1 bg-m1 text-white"
-                          >
-                            <Check size={14} strokeWidth={3} />
-                          </button>
-                          <span className="flex-1 text-sm text-ink-3 line-through">{t.text}</span>
-                          {isDeletePending(t.id) && <Badge variant="danger">待删除 {remainingSeconds(t.id)}s</Badge>}
-                          <Badge variant={LEVEL_META[t.level].variant}>{LEVEL_META[t.level].label}</Badge>
-                          <IconButton size="sm" onClick={() => startEdit(t)} disabled={isDeletePending(t.id)} aria-label="编辑"><Pencil size={15} /></IconButton>
-                          <IconButton
-                            size="sm"
-                            onClick={() => requestDelete(t)}
-                            disabled={isDeletePending(t.id)}
-                            aria-label="删除"
-                            className={touch ? 'text-ink-3' : 'opacity-0 transition-opacity duration-150 group-hover:opacity-100'}
-                          >
-                            <Trash2 size={15} />
-                          </IconButton>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+                <TodoDoneSection
+                  doneCount={doneCount}
+                  showDone={showDone}
+                  doneList={doneList}
+                  touch={touch}
+                  isDeletePending={isDeletePending}
+                  remainingSeconds={remainingSeconds}
+                  onToggleShowDone={() => setViewState((current) => ({ ...current, showDone: !current.showDone }))}
+                  onToggle={handleToggle}
+                  onEdit={startEdit}
+                  onDelete={requestDelete}
+                />
               )}
             </>
           )}
@@ -620,32 +464,7 @@ export default function Todos() {
         </div>
 
         {/* 右栏统计 */}
-        <aside className="h-fit space-y-3 lg:sticky lg:top-4">
-          <SideCard title="完成情况" icon={<ClipboardList size={14} />}>
-            <div className="flex items-center gap-4">
-              <Ring value={pct} size={88} color="var(--m1)">
-                <span className="text-lg font-bold tabular-nums text-ink">{Math.round(pct)}%</span>
-              </Ring>
-              <div className="text-xs text-ink-2">
-                <div>
-                  已完成 <span className="font-bold text-ink tabular-nums">{doneCount}</span> / {totalCount}
-                </div>
-                <div className="mt-1 text-ink-3">剩余 {totalCount - doneCount} 项</div>
-              </div>
-            </div>
-          </SideCard>
-          <SideCard title="优先级分布" icon={<ClipboardList size={14} />}>
-            <ul className="space-y-2">
-              {LEVEL_ROW.map((r) => (
-                <li key={r.key} className="flex items-center gap-2 text-xs">
-                  <span className="h-2 w-2 rounded-full" style={{ background: r.color }} />
-                  <span className="text-ink-2">{r.label}</span>
-                  <span className="ml-auto font-bold text-ink tabular-nums">{byLevel[r.key]} 项</span>
-                </li>
-              ))}
-            </ul>
-          </SideCard>
-        </aside>
+        <TodoSummary percent={pct} done={doneCount} total={totalCount} byLevel={byLevel} />
       </div>
     </div>
   )

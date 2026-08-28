@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { Check, ChevronLeft, ChevronRight, Minus, Pencil, Pin, PinOff, Plus, Target, Trash2, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Minus, Pencil, Pin, PinOff, Plus, Target, Trash2 } from 'lucide-react'
 import { GOALS_PAGE_SIZE, goalsListKey, useAddGoal, useAdjustGoal, useDeleteGoal, useGoals, useToggleGoalPin, useUpdateGoal } from '../hooks/useGoals'
 import type { GoalPage } from '../hooks/useGoals'
 import { useDeferredDelete } from '../hooks/useDeferredDelete'
@@ -11,17 +11,16 @@ import type { Goal } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { useClampPage } from '../hooks/useClampPage'
 import Button from '../components/ui/Button'
-import Input, { Textarea } from '../components/ui/Input'
 import Progress from '../components/ui/Progress'
 import Skeleton from '../components/ui/Skeleton'
 import EmptyState from '../components/ui/EmptyState'
 import PageHeader from '../components/ui/PageHeader'
 import IconButton from '../components/ui/IconButton'
-import IconPicker from '../components/ui/IconPicker'
 import { cn } from '../lib/cn'
 import QueryError from '../components/ui/QueryError'
 import { isGoalProgressValid } from '../utils/dataConsistency'
 import EntityTemplatePanel from '../components/ui/EntityTemplatePanel'
+import GoalEditor from '../features/goals/GoalEditor'
 
 export default function Goals() {
   const [page, setPage] = useState(0)
@@ -127,52 +126,10 @@ export default function Goals() {
       {goalsQuery.isError && <QueryError onRetry={() => goalsQuery.refetch()} />}
 
       {/* 添加目标 */}
-      <form onSubmit={handleAdd} className="space-y-3 rounded-2xl border border-border bg-surface p-4">
-        <div className="flex gap-2">
-          <IconPicker value={icon} onChange={setIcon} aria-label="选择图标" />
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="目标名称，如：读完 24 本书"
-            maxLength={200}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Input
-            type="number"
-            min="0"
-            max="1000000000000"
-            value={current}
-            onChange={(e) => setCurrent(e.target.value)}
-            placeholder="当前进度"
-            className="w-28 tabular-nums"
-          />
-          <Input
-            type="number"
-            min="1"
-            max="1000000000000"
-            required
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            placeholder="目标数值"
-            className="w-32 tabular-nums"
-          />
-          <Input
-            value={unit}
-            onChange={(e) => setUnit(e.target.value)}
-            placeholder="单位（本/次/公里…）"
-            maxLength={200}
-            className="min-w-36 flex-1"
-          />
-          <Button type="submit" disabled={!name.trim() || !target || Number(target) <= 0 || Number(current) < 0 || Number(current) > Number(target) || addGoal.isPending || updateGoal.isPending}>
-            <Plus size={16} />
-            {editingId ? '保存' : '创建'}
-          </Button>
-          {editingId && <IconButton type="button" onClick={resetForm} aria-label="取消编辑"><X size={16} /></IconButton>}
-        </div>
-        <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注（可选）" rows={2} maxLength={100000} />
-      </form>
+      <GoalEditor name={name} icon={icon} current={current} target={target} unit={unit} note={note}
+        editing={Boolean(editingId)} busy={addGoal.isPending || updateGoal.isPending}
+        onNameChange={setName} onIconChange={setIcon} onCurrentChange={setCurrent} onTargetChange={setTarget}
+        onUnitChange={setUnit} onNoteChange={setNote} onSubmit={handleAdd} onCancel={resetForm} />
 
       <EntityTemplatePanel
         kind="goal"
