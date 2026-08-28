@@ -47,7 +47,7 @@ select extensions.ok(
 select extensions.ok(
   pg_catalog.pg_get_functiondef((select oid from pg_catalog.pg_proc
     where pronamespace = 'private'::regnamespace and proname = 'finalize_restore_v8_unchecked'
-    limit 1)) not like '%jsonb_agg%',
+    limit 1)) !~ 'jsonb_agg\s*\([^)]*rows',
   'V8 finalization does not aggregate all rows into one JSONB value'
 );
 

@@ -13,6 +13,9 @@ insert into auth.users (
    'rls-b@example.test', crypt('not-a-real-password', gen_salt('bf')), now(), now(), now(), '{}', '{}', false)
 on conflict (id) do nothing;
 
+-- seed.sql 会为 001 预置一条 'CI owner private row'，行数断言前清掉这两个账号的存量数据。
+delete from public.todos where user_id in ('10000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002');
+
 insert into public.todos (id, user_id, text) values
   ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'A todo'),
   ('20000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'B todo');
