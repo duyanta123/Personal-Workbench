@@ -1,7 +1,9 @@
 import type { Json } from './database.types'
 import { supabase } from './supabase'
 import { deleteLocalValue, getLocalValue, listLocalValues, localKeys, setLocalValue } from './localData'
-import { getCachedSyncState, isNetworkError, refreshSyncState } from './outbox'
+import { getCachedSyncState, isNetworkError, refreshSyncState } from './syncCore'
+import { rpcCommandResultSchema, workbenchCommandV2Schema } from './runtimeSchemas'
+import { captureException } from './monitoring'
 
 export type CommandStatus = 'pending' | 'syncing' | 'conflict' | 'failed' | 'stale' | 'resolved'
 export type CommandResultStatus = 'applied' | 'duplicate' | 'conflict' | 'not_found' | 'stale_restore' | 'failed'
@@ -62,24 +64,24 @@ function historyKey(commandId: string) {
 }
 
 function isCommand(value: unknown): value is WorkbenchCommandV2 {
-  if (!value || typeof value !== 'object') return false
-  const row = value as Partial<WorkbenchCommandV2>
-  return row.version === 2 && typeof row.commandId === 'string' && typeof row.entityId === 'string'
-    && typeof row.userId === 'string' && typeof row.kind === 'string' && typeof row.createdAt === 'string'
-    && typeof row.restoreEpoch === 'number' && typeof row.status === 'string' && typeof row.payload === 'object'
+  return workbenchCommandV2Schema.safeParse(value).success
 }
 
 function parseResult(value: unknown, command: WorkbenchCommandV2): CommandResult {
-  const row = value && typeof value === 'object' ? value as Record<string, unknown> : {}
-  const allowed = new Set<CommandResultStatus>(['applied', 'duplicate', 'conflict', 'not_found', 'stale_restore', 'failed'])
+  const parsed = rpcCommandResultSchema.safeParse(value)
+  if (!parsed.success) return {
+    status: 'failed', commandId: command.commandId, entityId: command.entityId,
+    data: null, current: null, conflictingFields: [], message: 'RPC 返回格式无效'
+  }
+  const row = parsed.data
   return {
-    status: allowed.has(row.status as CommandResultStatus) ? row.status as CommandResultStatus : 'failed',
-    commandId: String(row.command_id ?? command.commandId),
-    entityId: String(row.entity_id ?? command.entityId),
-    data: row.data && typeof row.data === 'object' && !Array.isArray(row.data) ? row.data as Record<string, unknown> : null,
-    current: row.current && typeof row.current === 'object' && !Array.isArray(row.current) ? row.current as Record<string, unknown> : null,
-    conflictingFields: Array.isArray(row.conflicting_fields) ? row.conflicting_fields.map(String) : [],
-    message: typeof row.message === 'string' ? row.message : null
+    status: row.status,
+    commandId: row.command_id,
+    entityId: row.entity_id,
+    data: row.data,
+    current: row.current,
+    conflictingFields: row.conflicting_fields,
+    message: row.message
   }
 }
 
@@ -106,6 +108,18 @@ async function applyCommand(command: WorkbenchCommandV2): Promise<CommandResult>
     if (error) throw error
     return parseResult(data, command)
   }
+  if (command.kind === 'preference.update') {
+    const { data, error } = await supabase.rpc('apply_workbench_preference_v2', {
+      p_command_id: command.commandId,
+      p_entity_id: command.entityId,
+      p_restore_epoch: command.restoreEpoch,
+      p_payload: command.payload as Json,
+      p_expected: command.expected as Json,
+      p_base_version: command.baseVersion ?? 0
+    })
+    if (error) throw error
+    return parseResult(data, command)
+  }
   const { data, error } = await supabase.rpc('apply_workbench_command_v2', {
     p_command_id: command.commandId,
     p_entity_id: command.entityId,
@@ -128,6 +142,23 @@ async function pendingCommands(userId: string) {
 function commandParts(kind: string) {
   const [entity, action] = kind.split('.')
   return { entity, action }
+}
+
+function commandRpc(kind: string) {
+  if (kind === 'todo.move') return 'move_todo_v2'
+  if (kind === 'preference.update') return 'apply_workbench_preference_v2'
+  return 'apply_workbench_command_v2'
+}
+
+function reportCommandError(error: unknown, command: WorkbenchCommandV2, queueCount: number, stage: string) {
+  captureException(error, {
+    rpc: commandRpc(command.kind),
+    error_category: isNetworkError(error) ? 'network' : 'rpc',
+    queue_count: queueCount,
+    recovery_stage: stage,
+    restore_epoch: command.restoreEpoch,
+    command_kind: command.kind
+  })
 }
 
 async function compactCommand(
@@ -268,6 +299,7 @@ export async function enqueueCommand(
     emit(userId)
     return { status: result.status === 'conflict' ? 'conflict' : 'queued', commandId, entityId, data: result.current }
   } catch (error) {
+    reportCommandError(error, command, existing.length + 1, 'enqueue_apply')
     if (!isNetworkError(error)) {
       command.status = 'failed'
       command.lastError = error instanceof Error ? error.message : String(error)
@@ -332,6 +364,7 @@ async function flushUnlocked(userId: string): Promise<FlushCommandsResult> {
         else counters.failed++
       }
     } catch (error) {
+      reportCommandError(error, command, entries.length, 'flush_apply')
       command.status = isNetworkError(error) ? 'pending' : 'failed'
       command.attempts++
       command.lastError = error instanceof Error ? error.message : String(error)

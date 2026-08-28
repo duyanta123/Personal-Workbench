@@ -3,6 +3,7 @@ import type { VersionedRow } from '../types'
 import { enqueueCommand } from './commands'
 import { supabase } from './supabase'
 import type { WorkbenchCommandV2 } from './commands'
+import { DOMAIN_CONTRACTS } from './domainContracts'
 
 export type EntityCommandKind =
   | 'todo' | 'habit' | 'habit_log' | 'ledger' | 'goal' | 'note' | 'practice'
@@ -10,26 +11,8 @@ export type EntityCommandKind =
   | 'ledger_account' | 'ledger_payee' | 'ledger_rule' | 'ledger_split'
   | 'ledger_reconciliation' | 'entity_link' | 'template' | 'saved_view'
 
-const TABLES: Partial<Record<EntityCommandKind, string>> = {
-  todo: 'todos', habit: 'habits', habit_log: 'habit_logs', ledger: 'ledger_entries', goal: 'goals', note: 'notes',
-  practice: 'practice_problems', workout_session: 'workout_sessions', workout_exercise: 'workout_exercises',
-  body_metric: 'body_metrics', inbox: 'inbox_items', recurrence: 'recurrence_rules', ledger_account: 'ledger_accounts',
-  ledger_payee: 'ledger_payees', ledger_rule: 'ledger_rules', ledger_split: 'ledger_splits',
-  ledger_reconciliation: 'ledger_reconciliations', entity_link: 'entity_links', template: 'workbench_templates', saved_view: 'saved_views'
-}
-
-const QUERY_PREFIXES: Partial<Record<EntityCommandKind, string[]>> = {
-  todo: ['todos', 'today_todos', 'dashboard_summary', 'focus_items', 'today_workspace'],
-  habit: ['habits', 'dashboard_summary', 'focus_items', 'today_workspace'],
-  habit_log: ['habit_logs', 'dashboard_summary', 'today_workspace'],
-  ledger: ['ledger_entries', 'dashboard_summary', 'today_workspace'],
-  goal: ['goals', 'dashboard_summary', 'focus_items'],
-  note: ['notes', 'dashboard_summary'], practice: ['problems', 'dashboard_summary'],
-  workout_session: ['workouts', 'dashboard_summary'], workout_exercise: ['workout-exercises'], body_metric: ['body-metrics'],
-  inbox: ['inbox', 'today_workspace'], recurrence: ['recurrence_rules'],
-  ledger_account: ['ledger_accounts'], ledger_payee: ['ledger_payees'], ledger_rule: ['ledger_rules'],
-  ledger_reconciliation: ['ledger_reconciliations'], entity_link: ['workbench_artifact'], template: ['workbench_artifact'], saved_view: ['workbench_artifact']
-}
+const TABLES = Object.fromEntries(Object.entries(DOMAIN_CONTRACTS).map(([kind, contract]) => [kind, contract.table])) as Partial<Record<EntityCommandKind, string>>
+const QUERY_PREFIXES = Object.fromEntries(Object.entries(DOMAIN_CONTRACTS).map(([kind, contract]) => [kind, [...contract.queryPrefixes]])) as Partial<Record<EntityCommandKind, string[]>>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -257,6 +240,13 @@ export function replayPendingCommands(qc: QueryClient, commands: WorkbenchComman
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   for (const command of active) {
     const [entity, action] = command.kind.split('.')
+    if (command.kind === 'preference.update') {
+      qc.setQueryData(['prefs', command.userId], (value: unknown) => {
+        if (!isRecord(value)) return value
+        return { ...value, ...command.payload, row_version: Number(value.row_version ?? 1) + 1, _local_pending: true }
+      })
+      continue
+    }
     if (!TABLES[entity as EntityCommandKind] || !['create', 'update', 'delete', 'move'].includes(action)) continue
     const kind = entity as EntityCommandKind
     if (action === 'create') {

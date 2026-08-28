@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import type { PomodoroPrefs, UserPreferences } from '../types'
 import { useAuth } from './useAuth'
-import { buildPreferencesUpsert } from '../utils/dataConsistency'
 import type { PreferencesPatch } from '../utils/dataConsistency'
+import { enqueueCommand } from '../lib/commands'
 
 export const prefsKey = (userId: string | null) => ['prefs', userId] as const
 
@@ -37,14 +37,20 @@ export function useUpdatePreferences() {
   return useMutation({
     mutationFn: async (patch: PreferencesPatch) => {
       if (!userId) throw new Error('未登录')
-      const payload = buildPreferencesUpsert(userId, patch)
-      const { data, error } = await supabase!
-        .from('user_preferences')
-        .upsert(payload, { onConflict: 'user_id' })
-        .select()
-        .single()
-      if (error) throw error
-      return data as UserPreferences
+      let current = qc.getQueryData<UserPreferences | null>(prefsKey(userId)) ?? null
+      if (!current && navigator.onLine) {
+        const { data, error } = await supabase!.from('user_preferences').select('*').maybeSingle()
+        if (error) throw error
+        current = data as UserPreferences | null
+      }
+      if (!current) throw new Error('偏好尚未同步，无法修改')
+      const payload = patch as Record<string, unknown>
+      const expected = Object.fromEntries(Object.keys(payload).map((key) => [key, (current as unknown as Record<string, unknown>)[key]]))
+      const result = await enqueueCommand(userId, {
+        kind: 'preference.update', entityId: userId, payload, expected, baseVersion: current.row_version
+      })
+      qc.setQueryData(prefsKey(userId), { ...current, ...patch, row_version: current.row_version + 1, _local_pending: true })
+      return result.data as unknown as UserPreferences
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: prefsKey(userId) })
   })

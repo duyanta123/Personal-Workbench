@@ -250,10 +250,22 @@ function validRow(table: BackupTable, row: Record<string, unknown>): boolean {
   }
 }
 
-function validateTables(tables: BackupV7['tables']) {
+export interface BackupValidationOptions {
+  maxBytes?: number | null
+  maxTableRows?: number
+  maxTotalRows?: number
+}
+
+export function isValidBackupRow(table: BackupTable, row: Record<string, unknown>) {
+  return validRow(table, row)
+}
+
+function validateTables(tables: BackupV7['tables'], options: BackupValidationOptions = {}) {
+  const maxTableRows = options.maxTableRows ?? MAX_BACKUP_TABLE_ROWS
+  const maxTotalRows = options.maxTotalRows ?? MAX_BACKUP_TOTAL_ROWS
   let totalRows = 0
   for (const table of BACKUP_TABLES) {
-    if (tables[table].length > MAX_BACKUP_TABLE_ROWS) throw new Error(`${table} 数据超过 50,000 行`)
+    if (tables[table].length > maxTableRows) throw new Error(`${table} 数据超过 ${maxTableRows.toLocaleString()} 行`)
     totalRows += tables[table].length
     if (tables[table].some((row) => !validRow(table, row))) throw new Error(`${table} 数据字段不完整或类型错误`)
     if (table !== 'user_preferences') {
@@ -261,7 +273,7 @@ function validateTables(tables: BackupV7['tables']) {
       if (new Set(ids).size !== ids.length) throw new Error(`${table} 包含重复 ID`)
     }
   }
-  if (totalRows > MAX_BACKUP_TOTAL_ROWS) throw new Error('备份数据总行数超过 200,000 行')
+  if (totalRows > maxTotalRows) throw new Error(`备份数据总行数超过 ${maxTotalRows.toLocaleString()} 行`)
   if (tables.user_preferences.length > 1) throw new Error('user_preferences 只能有一条记录')
   const uniqueBy = (table: BackupTable, field: string, message: string) => {
     const values = tables[table].map((row) => row[field]).filter((value) => value !== undefined && value !== null)
@@ -306,9 +318,9 @@ function validateTables(tables: BackupV7['tables']) {
   }
 }
 
-export function normalizeBackup(value: unknown): BackupV7 {
+export function normalizeBackup(value: unknown, options: BackupValidationOptions = {}): BackupV7 {
   if (!isRecord(value)) throw new Error('备份文件不是有效对象')
-  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_BACKUP_BYTES) {
+  if (options.maxBytes !== null && new TextEncoder().encode(JSON.stringify(value)).byteLength > (options.maxBytes ?? MAX_BACKUP_BYTES)) {
     throw new Error('备份文件不能超过 40 MiB')
   }
   const metadata = isRecord(value.metadata) ? value.metadata : null
@@ -359,7 +371,7 @@ export function normalizeBackup(value: unknown): BackupV7 {
   }
   if (avatars.filter((avatar) => avatar.is_active).length > 1) throw new Error('只能有一张激活头像')
 
-  validateTables(tables)
+  validateTables(tables, options)
 
   const habitIds = new Set(tables.habits.map((row) => row.id).filter((id): id is string => typeof id === 'string'))
   if (tables.habit_logs.some((row) => typeof row.habit_id !== 'string' || !habitIds.has(row.habit_id))) {

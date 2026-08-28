@@ -597,6 +597,42 @@ export type Database = {
         }
         Relationships: []
       }
+      push_subscriptions: {
+        Row: {
+          auth_key: string
+          created_at: string
+          enabled: boolean
+          endpoint: string
+          id: string
+          p256dh: string
+          updated_at: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          auth_key: string
+          created_at?: string
+          enabled?: boolean
+          endpoint: string
+          id?: string
+          p256dh: string
+          updated_at?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Update: {
+          auth_key?: string
+          created_at?: string
+          enabled?: boolean
+          endpoint?: string
+          id?: string
+          p256dh?: string
+          updated_at?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       practice_problems: {
         Row: {
           created_at: string
@@ -908,6 +944,10 @@ export type Database = {
           monthly_budget: number | null
           monthly_budget_minor: number | null
           pomodoro: Json
+          push_preview_mode: string
+          row_version: number
+          timezone: string
+          todo_digest_time: string
           updated_at: string
           user_id: string
         }
@@ -917,6 +957,10 @@ export type Database = {
           monthly_budget?: number | null
           monthly_budget_minor?: number | null
           pomodoro?: Json
+          push_preview_mode?: string
+          row_version?: number
+          timezone?: string
+          todo_digest_time?: string
           updated_at?: string
           user_id?: string
         }
@@ -926,6 +970,10 @@ export type Database = {
           monthly_budget?: number | null
           monthly_budget_minor?: number | null
           pomodoro?: Json
+          push_preview_mode?: string
+          row_version?: number
+          timezone?: string
+          todo_digest_time?: string
           updated_at?: string
           user_id?: string
         }
@@ -1103,6 +1151,7 @@ export type Database = {
         }
         Returns: string
       }
+      get_backup_health: { Args: never; Returns: Json }
       command_conflicting_fields: {
         Args: { p_current: Json; p_expected: Json; p_payload: Json }
         Returns: string[]
@@ -1201,6 +1250,10 @@ export type Database = {
       }
       get_focus_items: {
         Args: { p_date: string; p_limit?: number }
+        Returns: Json
+      }
+      get_legacy_rpc_retirement_evidence: {
+        Args: { p_as_of?: string }
         Returns: Json
       }
       get_habit_stats: { Args: { p_date: string }; Returns: Json }
@@ -1423,6 +1476,50 @@ export type Database = {
           p_restore_epoch: number
         }
         Returns: Json
+      }
+      set_ledger_base_currency_v2: {
+        Args: {
+          p_command_id: string
+          p_currency: string
+          p_restore_epoch: number
+        }
+        Returns: Json
+      }
+      apply_workbench_preference_v2: {
+        Args: {
+          p_base_version: number
+          p_command_id: string
+          p_entity_id: string
+          p_expected: Json
+          p_payload: Json
+          p_restore_epoch: number
+        }
+        Returns: Json
+      }
+      upsert_push_subscription: {
+        Args: {
+          p_auth_key: string
+          p_endpoint: string
+          p_p256dh: string
+          p_user_agent?: string
+        }
+        Returns: string
+      }
+      remove_push_subscription: {
+        Args: { p_endpoint: string }
+        Returns: undefined
+      }
+      claim_notification: {
+        Args: { p_receipt_key: string; p_user_id: string }
+        Returns: boolean
+      }
+      finish_notification: {
+        Args: { p_error_code?: string; p_receipt_key: string; p_status: string; p_user_id: string }
+        Returns: undefined
+      }
+      report_reminder_run: {
+        Args: { p_error_code?: string; p_run_id: string; p_sent_count?: number; p_status: string }
+        Returns: undefined
       }
       upsert_avatar: { Args: { p_path: string }; Returns: Json }
       workbench_month_start: { Args: { p_month: string }; Returns: string }

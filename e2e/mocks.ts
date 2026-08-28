@@ -14,15 +14,17 @@ export const e2eUser = {
 
 export function e2eToken() {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
+  const issuedAt = Math.floor(Date.now() / 1000)
   return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({
     aud: 'authenticated',
+    iat: issuedAt,
     exp: Math.floor(Date.now() / 1000) + 3600,
     sub: e2eUser.id,
     email: e2eUser.email,
     role: 'authenticated',
     app_metadata: e2eUser.app_metadata,
     user_metadata: e2eUser.user_metadata
-  })}.e2e-signature`
+  })}.e2e-signature1`
 }
 
 export interface V2CommandPayload {
@@ -113,6 +115,9 @@ export async function mockWorkbench(page: Page, options: MockOptions = {}) {
       headers: corsHeaders,
       body: JSON.stringify({ access_token: e2eToken(), refresh_token: 'refresh-token', expires_in: 3600, token_type: 'bearer', user: e2eUser })
     })
+  })
+  await page.route('**/auth/v1/factors**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ all: [], totp: [], phone: [] }) })
   })
   await page.route('**/rest/v1/**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', headers: rangeHeaders(0), body: '[]' })

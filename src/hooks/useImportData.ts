@@ -13,13 +13,15 @@ import { clearPomodoroRuntime } from '../utils/pomodoroRuntime'
 import {
   discardPendingOperations,
   flushOutbox,
-  pendingOperationCount,
-  refreshSyncState
+  pendingOperationCount
 } from '../lib/outbox'
+import { refreshSyncState } from '../lib/syncCore'
 import { clearUserLocalData } from '../lib/localData'
 import { discardCommand, flushCommands, listCommands } from '../lib/commands'
 import type { Json } from '../lib/database.types'
 import { rpcArray, rpcRecord } from '../lib/rpcSchemas'
+import { stageBackupV8, type BackupV8RestoreInput } from '../utils/backupV8'
+import { captureException } from '../lib/monitoring'
 
 interface RestoreResult {
   counts: Record<string, number>
@@ -31,6 +33,12 @@ interface RestoreResult {
 const MAX_CHUNK_ROWS = 500
 // Leave room for jsonb's normalized text representation before the server's 1 MiB hard limit.
 const TARGET_CHUNK_BYTES = 900 * 1024
+
+export type BackupRestoreInput = BackupV7 | BackupV8RestoreInput
+
+function isV8Restore(input: BackupRestoreInput): input is BackupV8RestoreInput {
+  return 'kind' in input && input.kind === 'v8'
+}
 
 function restoreChunks(rows: Record<string, unknown>[]) {
   const encoder = new TextEncoder()
@@ -56,7 +64,7 @@ export function useImportData() {
   const qc = useQueryClient()
   const { userId } = useAuth()
   return useMutation({
-    mutationFn: async (payload: BackupV7) => {
+    mutationFn: async (payload: BackupRestoreInput) => {
       if (!userId) throw new Error('未登录')
       if (!navigator.onLine) throw new Error('恢复数据需要联网')
       cancelAllPendingDeletes()
@@ -86,54 +94,73 @@ export function useImportData() {
       }
 
       const sync = await refreshSyncState(userId)
-      const manifest = Object.fromEntries(BACKUP_TABLES.map((table) => [table, payload.tables[table].length]))
-      const sourceVersion = payload.metadata.source_version ?? 7
+      const manifest = Object.fromEntries(BACKUP_TABLES.map((table) => [
+        table,
+        isV8Restore(payload) ? payload.manifest.tables[table].rows : payload.tables[table].length
+      ]))
+      // V8 is a streaming container around the current V7 relational model,
+      // but it has its own server-side capacity class.  The database maps the
+      // marker back to V7 only when invoking the relational restore parser.
+      const sourceVersion = isV8Restore(payload) ? 8 : (payload.metadata.source_version ?? 7)
       const begin = await supabase!.rpc('begin_restore', {
         p_expected_revision: sync.revision,
         p_source_version: sourceVersion,
         p_manifest: manifest
       })
-      if (begin.error) throw begin.error
+      if (begin.error) {
+        captureException(begin.error, { rpc: 'begin_restore', error_category: 'rpc', recovery_stage: 'begin_restore' })
+        throw begin.error
+      }
       const restoreId = String(begin.data ?? '')
       if (!restoreId) throw new Error('服务端未返回恢复任务 ID')
 
       const stagedPaths: string[] = []
       let committed = false
       try {
-        for (const table of BACKUP_TABLES) {
-          const chunks = restoreChunks(payload.tables[table])
-          for (let index = 0; index < chunks.length; index++) {
-            const staged = await supabase!.rpc('stage_restore_chunk', {
-              p_restore_id: restoreId,
-              p_table: table,
-              p_chunk_index: index,
-              p_rows: chunks[index] as unknown as Json
-            })
-            if (staged.error) throw staged.error
-          }
-        }
-
         const avatarRows: { path: string; is_active: boolean; created_at: string }[] = []
-        for (const avatar of payload.avatars) {
-          const decoded = base64ToBlob(avatar.data_base64, avatar.mime_type)
-          if (decoded.size > MAX_AVATAR_BYTES) throw new Error('备份中的头像超过 5 MiB')
-          const webp = await compressImage(new File([decoded], 'avatar', { type: avatar.mime_type }))
-          if (webp.size > MAX_AVATAR_BYTES) throw new Error('压缩后的头像超过 5 MiB')
-          const path = `${userId}/restore-${restoreId}-${crypto.randomUUID()}.webp`
-          const { error } = await supabase!.storage.from('avatars').upload(path, webp, {
-            contentType: 'image/webp',
-            upsert: false
-          })
-          if (error) throw error
-          stagedPaths.push(path)
-          avatarRows.push({ path, is_active: avatar.is_active, created_at: avatar.created_at })
+        if (isV8Restore(payload)) {
+          await stageBackupV8(payload, restoreId, userId, { stagedPaths, avatarRows })
+        } else {
+          for (const table of BACKUP_TABLES) {
+            const chunks = restoreChunks(payload.tables[table])
+            for (let index = 0; index < chunks.length; index++) {
+              const staged = await supabase!.rpc('stage_restore_chunk', {
+                p_restore_id: restoreId,
+                p_table: table,
+                p_chunk_index: index,
+                p_rows: chunks[index] as unknown as Json
+              })
+              if (staged.error) {
+                captureException(staged.error, { rpc: 'stage_restore_chunk', error_category: 'rpc', recovery_stage: 'stage_restore_chunk', table, chunk_index: index })
+                throw staged.error
+              }
+            }
+          }
+
+          for (const avatar of payload.avatars) {
+            const decoded = base64ToBlob(avatar.data_base64, avatar.mime_type)
+            if (decoded.size > MAX_AVATAR_BYTES) throw new Error('备份中的头像超过 5 MiB')
+            const webp = await compressImage(new File([decoded], 'avatar', { type: avatar.mime_type }))
+            if (webp.size > MAX_AVATAR_BYTES) throw new Error('压缩后的头像超过 5 MiB')
+            const path = `${userId}/restore-${restoreId}-${crypto.randomUUID()}.webp`
+            const { error } = await supabase!.storage.from('avatars').upload(path, webp, {
+              contentType: 'image/webp',
+              upsert: false
+            })
+            if (error) throw error
+            stagedPaths.push(path)
+            avatarRows.push({ path, is_active: avatar.is_active, created_at: avatar.created_at })
+          }
         }
 
         const finalized = await supabase!.rpc('finalize_restore', {
           p_restore_id: restoreId,
           p_avatar_paths: avatarRows
         })
-        if (finalized.error) throw finalized.error
+        if (finalized.error) {
+          captureException(finalized.error, { rpc: 'finalize_restore', error_category: 'rpc', recovery_stage: 'finalize_restore', restore_epoch: sync.restore_epoch })
+          throw finalized.error
+        }
         committed = true
         const value = rpcRecord(finalized.data, 'restore result')
         rpcRecord(value.counts, 'restore result.counts')

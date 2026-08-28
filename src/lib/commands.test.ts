@@ -12,6 +12,11 @@ vi.mock('./outbox', () => ({
   refreshSyncState: vi.fn(() => Promise.resolve({ ...mocks.syncState })),
   isNetworkError: (error: unknown) => /network|fetch|offline/i.test(error instanceof Error ? error.message : String(error))
 }))
+vi.mock('./syncCore', () => ({
+  getCachedSyncState: vi.fn(() => Promise.resolve({ ...mocks.syncState })),
+  refreshSyncState: vi.fn(() => Promise.resolve({ ...mocks.syncState })),
+  isNetworkError: (error: unknown) => /network|fetch|offline/i.test(error instanceof Error ? error.message : String(error))
+}))
 vi.mock('./localData', () => {
   const localKeys = {
     commandPrefix: 'command:v2:', syncHistoryPrefix: 'sync-history:v2:', syncMetadata: 'sync-metadata:v2'

@@ -121,11 +121,15 @@ export interface PomodoroPrefs {
 
 export interface UserPreferences {
   user_id: string
+  row_version: number
   categories: { expense: string[]; income: string[] }
   monthly_budget: number | null
   monthly_budget_minor?: number | null
   currency_code?: CurrencyCode
   pomodoro: PomodoroPrefs
+  timezone?: string
+  todo_digest_time?: string
+  push_preview_mode?: 'summary' | 'content'
   updated_at: string
 }
 

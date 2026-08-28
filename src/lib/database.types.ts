@@ -15,6 +15,7 @@ import type {
   PomodoroSession,
   PracticeProblem,
   Todo,
+  TodoStatusHistory,
   UserAvatar,
   UserPreferences,
   WorkoutExercise,
@@ -60,6 +61,7 @@ export interface Database {
       entity_links: Table<import('../types').EntityLink>
       workbench_templates: Table<import('../types').WorkbenchTemplate>
       saved_views: Table<import('../types').SavedView>
+      todo_status_history: Table<TodoStatusHistory>
     }
     Views: Record<string, never>
     Functions: {
@@ -70,6 +72,8 @@ export interface Database {
       finalize_restore: Rpc<{ p_restore_id: string; p_avatar_paths?: Json }>
       get_dashboard_summary: Rpc<{ p_date: string; p_month: string }>
       get_dashboard_summary_v2: Rpc<{ p_date: string; p_month: string }>
+      get_backup_health: Rpc
+      get_legacy_rpc_retirement_evidence: Rpc<{ p_as_of?: string }>
       get_focus_items: Rpc<{ p_date: string; p_limit: number }>
       get_habit_stats: Rpc<{ p_date: string }>
       get_ledger_summary: Rpc<{ p_month: string }>
@@ -111,6 +115,12 @@ export interface Database {
       reconcile_ledger_account: Rpc<{ p_command_id: string; p_restore_epoch: number; p_reconciliation_id: string; p_account_id: string; p_statement_date: string; p_balance_minor: number; p_entry_ids: string[] }>
       switch_ledger_currency: Rpc<{ p_command_id: string; p_restore_epoch: number; p_currency: string }>
       set_ledger_base_currency_v2: Rpc<{ p_command_id: string; p_restore_epoch: number; p_currency: string }>
+      apply_workbench_preference_v2: Rpc<{ p_command_id: string; p_entity_id: string; p_restore_epoch: number; p_payload: Json; p_expected: Json; p_base_version: number }>
+      upsert_push_subscription: Rpc<{ p_endpoint: string; p_p256dh: string; p_auth_key: string; p_user_agent?: string | null }, string>
+      remove_push_subscription: Rpc<{ p_endpoint: string }, null>
+      claim_notification: Rpc<{ p_receipt_key: string; p_user_id: string }, boolean>
+      finish_notification: Rpc<{ p_error_code?: string | null; p_receipt_key: string; p_status: string; p_user_id: string }, null>
+      report_reminder_run: Rpc<{ p_error_code?: string | null; p_run_id: string; p_sent_count?: number; p_status: string }, null>
       suggest_ledger_recurrences: Rpc<{ p_today: string }>
     }
     Enums: Record<string, never>

@@ -6,6 +6,9 @@ export interface PreferencesPatch {
   monthly_budget_minor?: number | null
   currency_code?: UserPreferences['currency_code']
   pomodoro?: PomodoroPrefs
+  timezone?: string
+  todo_digest_time?: string
+  push_preview_mode?: UserPreferences['push_preview_mode']
 }
 
 export function buildPreferencesUpsert(userId: string, patch: PreferencesPatch) {
