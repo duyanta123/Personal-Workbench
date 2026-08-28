@@ -8,8 +8,8 @@ select extensions.ok(
   'legacy V2 restore remains revoked for clients'
 );
 select extensions.ok(
-  pg_catalog.has_function_privilege('authenticated', 'public.restore_workbench_backup_v3(jsonb,jsonb,bigint)', 'EXECUTE'),
-  'V3 restore remains available behind the recent-authentication guard'
+  not pg_catalog.has_function_privilege('authenticated', 'public.restore_workbench_backup_v3(jsonb,jsonb,bigint)', 'EXECUTE'),
+  'legacy V3 restore is revoked by the rollout lock'
 );
 select extensions.ok(
   not pg_catalog.has_function_privilege('authenticated', 'public.restore_workbench_backup_v7(jsonb,jsonb,bigint)', 'EXECUTE'),
