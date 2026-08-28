@@ -37,16 +37,36 @@ Deno.serve(async (request) => {
     const factors = await admin.auth.admin.mfa.listFactors({ userId: userResult.data.user.id })
     if (factors.error) throw factors.error
     const hasVerified = factors.data.factors.some((factor) => factor.status === 'verified')
-    if (hasVerified ? jwt.aal !== 'aal2' : !jwt.iat || Date.now() / 1000 - jwt.iat > 300) {
-      return response(403, { error: hasVerified ? 'aal2 required' : 'recent authentication required' })
+    const age = Date.now() / 1000 - (jwt.iat ?? 0)
+    if (!jwt.iat || age > 300 || age < -60) {
+      return response(403, { error: 'recent authentication required' })
+    }
+    if (hasVerified && jwt.aal !== 'aal2') {
+      return response(403, { error: 'aal2 required' })
     }
 
-    const listed = await admin.storage.from('avatars').list(userResult.data.user.id, { limit: 100 })
-    if (listed.error) throw listed.error
-    const paths = listed.data.map((item) => `${userResult.data.user.id}/${item.name}`)
+    const bucket = admin.storage.from('avatars')
+    const listAll = async (prefix: string): Promise<string[]> => {
+      const paths: string[] = []
+      for (let offset = 0; ; offset += 1000) {
+        const listed = await bucket.list(prefix, { limit: 1000, offset, sortBy: { column: 'name', order: 'asc' } })
+        if (listed.error) throw listed.error
+        const page = listed.data ?? []
+        for (const item of page) {
+          const path = `${prefix}/${item.name}`
+          if (item.id) paths.push(path)
+          else paths.push(...await listAll(path))
+        }
+        if (page.length < 1000) break
+      }
+      return paths
+    }
+    const paths = await listAll(userResult.data.user.id)
     if (paths.length) {
-      const removed = await admin.storage.from('avatars').remove(paths)
-      if (removed.error) throw removed.error
+      for (let offset = 0; offset < paths.length; offset += 100) {
+        const removed = await bucket.remove(paths.slice(offset, offset + 100))
+        if (removed.error) throw removed.error
+      }
     }
     const deleted = await admin.auth.admin.deleteUser(userResult.data.user.id)
     if (deleted.error) throw deleted.error

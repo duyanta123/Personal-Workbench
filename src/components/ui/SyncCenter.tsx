@@ -1,10 +1,10 @@
 import { AlertTriangle, CheckCircle2, Clock3, Download, RefreshCw, WifiOff, X } from 'lucide-react'
-import { useCommandSync } from '../../hooks/useCommandSync'
+import type { useCommandSync } from '../../hooks/useCommandSync'
 import { useOnline } from '../../hooks/useOnline'
 import Button from './Button'
 import Modal from './Modal'
 import { useAuth } from '../../hooks/useAuth'
-import { getCachedSyncState } from '../../lib/outbox'
+import { getCachedSyncState } from '../../lib/syncCore'
 import { buildSyncDiagnostics } from '../../lib/syncDiagnostics'
 import { downloadFile } from '../../utils/export'
 
@@ -12,10 +12,11 @@ const STATUS_LABEL = {
   pending: '等待同步', syncing: '正在同步', conflict: '需要处理', failed: '同步失败', stale: '恢复后失效', resolved: '已解决'
 } as const
 
-export default function SyncCenter({ open, onClose }: { open: boolean; onClose: () => void }) {
+type SyncState = ReturnType<typeof useCommandSync>
+
+export default function SyncCenter({ open, onClose, state }: { open: boolean; onClose: () => void; state: SyncState }) {
   const online = useOnline()
   const { userId } = useAuth()
-  const state = useCommandSync()
   const active = state.commands.filter((command) => command.status !== 'resolved')
 
   async function downloadDiagnostics() {

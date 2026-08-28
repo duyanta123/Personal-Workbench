@@ -12,58 +12,49 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
+        with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run ci
         env:
           MIGRATION_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
-      - run: npm audit --audit-level=high
-
-  e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Verify system Chrome
-        run: google-chrome --version
+          VITE_APP_RELEASE: ${{ github.sha }}
       - run: npm run test:e2e
+      - run: npm run test:pwa
+      - run: npm audit --audit-level=high
 
   database:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
-        with:
-          version: latest
+        with: { version: latest }
       - run: supabase db start
-      - run: supabase db reset
-      - run: supabase db lint --local --level warning
-      - run: supabase test db
+      - name: Export local Supabase API credentials
+        run: supabase status -o env >> "$GITHUB_ENV"
+      - name: Apply core migrations and pgTAP tests
+        run: |
+          supabase db reset
+          supabase db lint --local --level warning
+          supabase test db
       - name: Fail on database type drift
         run: |
           git ls-files --error-unmatch supabase/generated/database.types.ts >/dev/null
           supabase gen types typescript --local --schema public > supabase/generated/database.types.ts
           git diff --exit-code -- supabase/generated/database.types.ts
-      - name: Upload generated database types
-        uses: actions/upload-artifact@v4
+      - name: Validate deferred rollout migrations and tests
+        run: |
+          cp supabase/deferred_migrations/*.sql supabase/migrations/
+          cp supabase/deferred_tests/*.sql supabase/tests/database/
+          supabase db reset
+          supabase db lint --local --level warning
+          supabase test db
+      - name: Exercise real auth, RLS, recent auth and restore health RPCs
+        run: npm run test:integration
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: database-types
           path: supabase/generated/database.types.ts
-      - name: Validate deferred rollout migrations
-        run: cp supabase/deferred_migrations/*.sql supabase/migrations/
-      - run: supabase db reset
-      - run: supabase db lint --local --level warning
-      - name: Add post-rollout database tests
-        run: cp supabase/deferred_tests/*.sql supabase/tests/database/
-      - run: supabase test db

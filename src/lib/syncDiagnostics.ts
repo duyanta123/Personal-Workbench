@@ -1,5 +1,5 @@
 import type { SyncMetadata, WorkbenchCommandV2 } from './commands'
-import type { SyncState } from './outbox'
+import type { SyncState } from './syncCore'
 
 export function buildSyncDiagnostics(input: {
   online: boolean

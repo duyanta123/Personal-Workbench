@@ -115,7 +115,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const encoded = current.data.session.access_token.split('.')[1] ?? ''
     const padded = encoded.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(encoded.length / 4) * 4, '=')
     const claims = JSON.parse(atob(padded)) as { iat?: number; aal?: string }
-    if (!claims.iat || Date.now() / 1000 - claims.iat > 300) throw new Error('重新验证已过期')
+    const age = Date.now() / 1000 - (claims.iat ?? 0)
+    if (!claims.iat || age > 300 || age < -60) throw new Error('重新验证已过期')
     if (factor && claims.aal !== 'aal2') throw new Error('动态验证码验证未达到 AAL2')
     applySession(current.data.session, true)
     await refreshSecurityState()

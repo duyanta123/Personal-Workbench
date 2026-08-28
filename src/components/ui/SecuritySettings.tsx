@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { KeyRound, ShieldCheck, Trash2, X } from 'lucide-react'
+import { Bell, KeyRound, ShieldCheck, Trash2, X } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
 import { listCommands, discardCommand } from '../../lib/commands'
@@ -13,6 +13,8 @@ import Field from './Field'
 import Input from './Input'
 import Modal from './Modal'
 import SensitiveAuthDialog from './SensitiveAuthDialog'
+import { usePushNotifications } from '../../hooks/usePushNotifications'
+import { usePreferences, useUpdatePreferences } from '../../hooks/usePreferences'
 
 interface TotpFactor {
   id: string
@@ -29,7 +31,12 @@ export default function SecuritySettings({ open, onClose }: { open: boolean; onC
   const [enrollment, setEnrollment] = useState<{ factorId: string; qr: string; secret: string } | null>(null)
   const [verifyCode, setVerifyCode] = useState('')
   const [deleteText, setDeleteText] = useState('')
+  const [backupAcknowledged, setBackupAcknowledged] = useState(false)
+  const [unlockedAt, setUnlockedAt] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+  const pushNotifications = usePushNotifications()
+  const preferences = usePreferences()
+  const updatePreferences = useUpdatePreferences()
 
   async function loadFactors() {
     const result = await supabase!.auth.mfa.listFactors()
@@ -39,9 +46,15 @@ export default function SecuritySettings({ open, onClose }: { open: boolean; onC
   }
 
   useEffect(() => {
-    if (!open) { setUnlocked(false); setEnrollment(null); setVerifyCode(''); setDeleteText(''); return }
+    if (!open) { setUnlocked(false); setUnlockedAt(null); setEnrollment(null); setVerifyCode(''); setDeleteText(''); setBackupAcknowledged(false); return }
     void loadFactors().catch((cause) => push({ kind: 'error', message: `安全设置加载失败：${(cause as Error).message}` }))
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!unlockedAt) return
+    const timer = window.setTimeout(() => { setUnlocked(false); setUnlockedAt(null) }, 300_000)
+    return () => window.clearTimeout(timer)
+  }, [unlockedAt])
 
   async function startEnrollment() {
     if (!unlocked) { setAuthOpen(true); return }
@@ -87,7 +100,7 @@ export default function SecuritySettings({ open, onClose }: { open: boolean; onC
 
   async function deleteAccount() {
     if (!unlocked) { setAuthOpen(true); return }
-    if (deleteText !== 'DELETE' || !userId) return
+    if (!backupAcknowledged || deleteText !== 'DELETE' || !userId) return
     const [legacy, commands] = await Promise.all([pendingOperationCount(userId), listCommands(userId)])
     const unresolved = commands.filter((command) => command.status !== 'resolved')
     if (legacy + unresolved.length > 0 && !window.confirm(`将永久丢弃 ${legacy + unresolved.length} 条未同步操作并删除账号，确定继续吗？`)) return
@@ -138,14 +151,43 @@ export default function SecuritySettings({ open, onClose }: { open: boolean; onC
             </div>
           )}
         </section>
+        <section className="mt-4 rounded-xl border border-border p-4">
+          <div className="flex items-center gap-2"><Bell size={16} /><h3 className="text-sm font-medium text-ink">后台提醒</h3></div>
+          <p className="mt-1 text-xs leading-relaxed text-ink-3">习惯提醒和每日待办摘要通过 Web Push 发送，默认只显示非敏感摘要。</p>
+          {pushNotifications.supported ? (
+            <Button className="mt-3" size="sm" variant="secondary" disabled={pushNotifications.busy} onClick={() => void (pushNotifications.enabled ? pushNotifications.disable() : pushNotifications.enable())}>
+              {pushNotifications.busy ? '处理中…' : pushNotifications.enabled ? '停用后台提醒' : '启用后台提醒'}
+            </Button>
+          ) : <p className="mt-3 text-xs text-ink-3">当前浏览器或环境不支持 Web Push。</p>}
+          {pushNotifications.error && <p role="alert" className="mt-2 text-xs text-danger">{pushNotifications.error}</p>}
+          {preferences.data ? <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <label htmlFor="todo-digest-time" className="text-xs text-ink-2">摘要时间
+              <Input id="todo-digest-time" type="time" className="mt-1" value={(preferences.data.todo_digest_time ?? '09:00').slice(0, 5)} disabled={updatePreferences.isPending} onChange={(event) => void updatePreferences.mutateAsync({ todo_digest_time: event.target.value })} />
+            </label>
+            <label htmlFor="push-preview-mode" className="text-xs text-ink-2">推送预览
+              <select id="push-preview-mode" className="mt-1 w-full rounded-xl border border-border bg-page px-3 py-2 text-sm text-ink" value={preferences.data.push_preview_mode ?? 'summary'} disabled={updatePreferences.isPending} onChange={(event) => void updatePreferences.mutateAsync({ push_preview_mode: event.target.value as 'summary' | 'content' })}>
+                <option value="summary">仅显示数量/通用提醒（推荐）</option>
+                <option value="content">显示任务或习惯名称</option>
+              </select>
+            </label>
+            <label htmlFor="preference-timezone" className="text-xs text-ink-2 sm:col-span-2">时区
+              <Input id="preference-timezone" key={preferences.data.timezone} className="mt-1" defaultValue={preferences.data.timezone ?? 'Asia/Shanghai'} disabled={updatePreferences.isPending} onBlur={(event) => { if (event.target.value !== preferences.data?.timezone) void updatePreferences.mutateAsync({ timezone: event.target.value }) }} />
+            </label>
+            {updatePreferences.error && <p role="alert" className="sm:col-span-2 text-xs text-danger">偏好更新失败：{(updatePreferences.error as Error).message}</p>}
+          </div> : null}
+        </section>
         <section className="mt-4 rounded-xl border border-danger/30 p-4">
           <div className="flex items-center gap-2 text-danger"><Trash2 size={16} /><h3 className="text-sm font-medium">永久删除账号</h3></div>
           <p className="mt-1 text-xs leading-relaxed text-ink-3">请先导出备份。删除将清除服务器和本机数据，不能撤销。</p>
+          <label className="mt-3 flex items-start gap-2 text-xs text-ink-2">
+            <input type="checkbox" checked={backupAcknowledged} onChange={(event) => setBackupAcknowledged(event.target.checked)} />
+            <span>我已导出并确认备份可用，理解账号删除不可撤销。</span>
+          </label>
           <Field label="输入 DELETE 确认"><Input value={deleteText} onChange={(event) => setDeleteText(event.target.value)} /></Field>
-          <Button className="mt-3" size="sm" variant="danger" disabled={busy || deleteText !== 'DELETE'} onClick={() => void deleteAccount()}>删除账号</Button>
+          <Button className="mt-3" size="sm" variant="danger" disabled={busy || !backupAcknowledged || deleteText !== 'DELETE'} onClick={() => void deleteAccount()}>删除账号</Button>
         </section>
       </div>
     </Modal>
-    <SensitiveAuthDialog open={authOpen} title="验证安全设置" onClose={() => setAuthOpen(false)} onVerified={() => { setUnlocked(true); push({ kind: 'success', message: '安全设置已解锁 5 分钟' }) }} />
+    <SensitiveAuthDialog open={authOpen} title="验证安全设置" onClose={() => setAuthOpen(false)} onVerified={() => { setUnlocked(true); setUnlockedAt(Date.now()); push({ kind: 'success', message: '安全设置已解锁 5 分钟' }) }} />
   </>
 }
