@@ -35,7 +35,8 @@ jobs:
       # 会导致 status -o env 只导出 DB_URL 而缺少密钥，因此启动完整栈。
       - run: supabase start
       - name: Export local Supabase API credentials
-        run: supabase status -o env >> "$GITHUB_ENV"
+        # status -o env 输出 KEY="value"，GITHUB_ENV 不做 shell 展开，需先去掉引号。
+        run: supabase status -o env | sed -E 's/^([A-Z0-9_]+)="(.*)"$/\1=\2/' >> "$GITHUB_ENV"
       - name: Apply core migrations
         run: supabase db reset
       - name: Lint core database
