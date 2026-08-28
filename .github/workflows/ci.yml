@@ -31,7 +31,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
         with: { version: latest }
-      - run: supabase db start
+      # 集成测试需要完整本地 API（auth/rest/kong），db start 只启动 Postgres，
+      # 会导致 status -o env 只导出 DB_URL 而缺少密钥，因此启动完整栈。
+      - run: supabase start
       - name: Export local Supabase API credentials
         run: supabase status -o env >> "$GITHUB_ENV"
       - name: Apply core migrations
