@@ -7,11 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.15"
-  }
   public: {
     Tables: {
       body_metrics: {
@@ -597,42 +592,6 @@ export type Database = {
         }
         Relationships: []
       }
-      push_subscriptions: {
-        Row: {
-          auth_key: string
-          created_at: string
-          enabled: boolean
-          endpoint: string
-          id: string
-          p256dh: string
-          updated_at: string
-          user_agent: string | null
-          user_id: string
-        }
-        Insert: {
-          auth_key: string
-          created_at?: string
-          enabled?: boolean
-          endpoint: string
-          id?: string
-          p256dh: string
-          updated_at?: string
-          user_agent?: string | null
-          user_id?: string
-        }
-        Update: {
-          auth_key?: string
-          created_at?: string
-          enabled?: boolean
-          endpoint?: string
-          id?: string
-          p256dh?: string
-          updated_at?: string
-          user_agent?: string | null
-          user_id?: string
-        }
-        Relationships: []
-      }
       practice_problems: {
         Row: {
           created_at: string
@@ -677,6 +636,42 @@ export type Database = {
           title?: string
           updated_at?: string
           url?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      push_subscriptions: {
+        Row: {
+          auth_key: string
+          created_at: string
+          enabled: boolean
+          endpoint: string
+          id: string
+          p256dh: string
+          updated_at: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          auth_key: string
+          created_at?: string
+          enabled?: boolean
+          endpoint: string
+          id?: string
+          p256dh: string
+          updated_at?: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          auth_key?: string
+          created_at?: string
+          enabled?: boolean
+          endpoint?: string
+          id?: string
+          p256dh?: string
+          updated_at?: string
+          user_agent?: string | null
           user_id?: string
         }
         Relationships: []
@@ -1143,6 +1138,17 @@ export type Database = {
         }
         Returns: Json
       }
+      apply_workbench_preference_v2: {
+        Args: {
+          p_base_version: number
+          p_command_id: string
+          p_entity_id: string
+          p_expected: Json
+          p_payload: Json
+          p_restore_epoch: number
+        }
+        Returns: Json
+      }
       begin_restore: {
         Args: {
           p_expected_revision: number
@@ -1151,7 +1157,10 @@ export type Database = {
         }
         Returns: string
       }
-      get_backup_health: { Args: never; Returns: Json }
+      claim_notification: {
+        Args: { p_receipt_key: string; p_user_id: string }
+        Returns: boolean
+      }
       command_conflicting_fields: {
         Args: { p_current: Json; p_expected: Json; p_payload: Json }
         Returns: string[]
@@ -1240,6 +1249,16 @@ export type Database = {
         Args: { p_avatar_paths?: Json; p_restore_id: string }
         Returns: Json
       }
+      finish_notification: {
+        Args: {
+          p_error_code?: string
+          p_receipt_key: string
+          p_status: string
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      get_backup_health: { Args: never; Returns: Json }
       get_dashboard_summary: {
         Args: { p_date: string; p_month: string }
         Returns: Json
@@ -1252,12 +1271,12 @@ export type Database = {
         Args: { p_date: string; p_limit?: number }
         Returns: Json
       }
+      get_habit_stats: { Args: { p_date: string }; Returns: Json }
+      get_ledger_summary: { Args: { p_month: string }; Returns: Json }
       get_legacy_rpc_retirement_evidence: {
         Args: { p_as_of?: string }
         Returns: Json
       }
-      get_habit_stats: { Args: { p_date: string }; Returns: Json }
-      get_ledger_summary: { Args: { p_month: string }; Returns: Json }
       get_note_stats: { Args: { p_date: string }; Returns: Json }
       get_note_stats_range: {
         Args: { p_end: string; p_start: string }
@@ -1416,6 +1435,19 @@ export type Database = {
         }
         Returns: boolean
       }
+      remove_push_subscription: {
+        Args: { p_endpoint: string }
+        Returns: undefined
+      }
+      report_reminder_run: {
+        Args: {
+          p_error_code?: string
+          p_run_id: string
+          p_sent_count?: number
+          p_status: string
+        }
+        Returns: undefined
+      }
       restore_workbench_backup_v2: {
         Args: { p_avatar_paths?: Json; p_payload: Json }
         Returns: Json
@@ -1459,6 +1491,14 @@ export type Database = {
         Args: { p_done: boolean; p_habit_id: string; p_log_date: string }
         Returns: boolean
       }
+      set_ledger_base_currency_v2: {
+        Args: {
+          p_command_id: string
+          p_currency: string
+          p_restore_epoch: number
+        }
+        Returns: Json
+      }
       stage_restore_chunk: {
         Args: {
           p_chunk_index: number
@@ -1477,25 +1517,7 @@ export type Database = {
         }
         Returns: Json
       }
-      set_ledger_base_currency_v2: {
-        Args: {
-          p_command_id: string
-          p_currency: string
-          p_restore_epoch: number
-        }
-        Returns: Json
-      }
-      apply_workbench_preference_v2: {
-        Args: {
-          p_base_version: number
-          p_command_id: string
-          p_entity_id: string
-          p_expected: Json
-          p_payload: Json
-          p_restore_epoch: number
-        }
-        Returns: Json
-      }
+      upsert_avatar: { Args: { p_path: string }; Returns: Json }
       upsert_push_subscription: {
         Args: {
           p_auth_key: string
@@ -1505,23 +1527,6 @@ export type Database = {
         }
         Returns: string
       }
-      remove_push_subscription: {
-        Args: { p_endpoint: string }
-        Returns: undefined
-      }
-      claim_notification: {
-        Args: { p_receipt_key: string; p_user_id: string }
-        Returns: boolean
-      }
-      finish_notification: {
-        Args: { p_error_code?: string; p_receipt_key: string; p_status: string; p_user_id: string }
-        Returns: undefined
-      }
-      report_reminder_run: {
-        Args: { p_error_code?: string; p_run_id: string; p_sent_count?: number; p_status: string }
-        Returns: undefined
-      }
-      upsert_avatar: { Args: { p_path: string }; Returns: Json }
       workbench_month_start: { Args: { p_month: string }; Returns: string }
     }
     Enums: {
@@ -1655,3 +1660,4 @@ export const Constants = {
     Enums: {},
   },
 } as const
+
