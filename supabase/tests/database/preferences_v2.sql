@@ -9,7 +9,7 @@ set local role authenticated;
 select pg_catalog.set_config('request.jwt.claim.sub','10000000-0000-0000-0000-000000000019',true);
 select pg_catalog.set_config('request.jwt.claim.role','authenticated',true);
 select extensions.lives_ok($$select public.apply_workbench_preference_v2('70000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000019',0,'{"timezone":"Asia/Shanghai"}'::jsonb,'{"timezone":"Asia/Shanghai"}'::jsonb,1)$$,'preference V2 update is accepted');
-select extensions.throws_ok($$update public.user_preferences set timezone='UTC' where user_id='10000000-0000-0000-0000-000000000019'$$,'permission denied%','direct preference update is denied');
+select extensions.throws_ok($$update public.user_preferences set timezone='UTC' where user_id='10000000-0000-0000-0000-000000000019'$$,'42501',null,'direct preference update is denied');
 reset role;
 select extensions.is((select timezone from public.user_preferences where user_id='10000000-0000-0000-0000-000000000019'),'Asia/Shanghai','preference value is stored');
 select extensions.ok((select row_version from public.user_preferences where user_id='10000000-0000-0000-0000-000000000019') > 1,'preference row version increments');

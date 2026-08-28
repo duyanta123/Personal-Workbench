@@ -9,6 +9,12 @@ select extensions.ok(not pg_catalog.has_function_privilege('anon','public.set_le
 insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,raw_app_meta_data,raw_user_meta_data,is_super_admin)
 values('00000000-0000-0000-0000-000000000000','10000000-0000-0000-0000-000000000018','authenticated','authenticated','phase1@example.test',crypt('not-a-real-password',gen_salt('bf')),now(),now(),now(),'{}','{}',false);
 
+-- 注册触发器会自动创建 user_preferences 并推进 revision，begin_restore 断言前先把
+-- 该测试账号的 revision 钉回 0，避免与触发器链产生确定性冲突。
+insert into public.user_data_revisions(user_id,revision,restore_epoch) values
+  ('10000000-0000-0000-0000-000000000018',0,0)
+on conflict(user_id) do update set revision=0,restore_epoch=0;
+
 set local role authenticated;
 select pg_catalog.set_config('request.jwt.claim.sub','10000000-0000-0000-0000-000000000018',true);
 select pg_catalog.set_config('request.jwt.claim.role','authenticated',true);

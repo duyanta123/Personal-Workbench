@@ -8,6 +8,8 @@ values('00000000-0000-0000-0000-000000000000','10000000-0000-0000-0000-000000000
 select extensions.ok(not pg_catalog.has_table_privilege('authenticated','private.workbench_restore_limits','SELECT'),'restore limits stay private');
 select extensions.ok(pg_catalog.has_function_privilege('authenticated','public.get_backup_health()','EXECUTE'),'health RPC is executable');
 select extensions.ok(not pg_catalog.has_function_privilege('anon','public.get_backup_health()','EXECUTE'),'anonymous health access is denied');
+-- 目录级断言：private 函数仅超级用户可调用，必须放在角色切换之前。
+select extensions.ok('todo_status_history' = any(private.workbench_backup_tables_v7()),'restore allow-list includes status history');
 
 set local role authenticated;
 select pg_catalog.set_config('request.jwt.claim.sub','10000000-0000-0000-0000-000000000020',true);
@@ -16,7 +18,6 @@ select extensions.is((public.get_backup_health()->>'total_rows')::bigint,1::bigi
 select extensions.is((public.get_backup_health()->>'max_table_rows')::bigint,500000::bigint,'default per-table limit is exposed');
 select extensions.is((public.get_backup_health()->>'max_total_rows')::bigint,2000000::bigint,'default total limit is exposed');
 select extensions.is(public.get_backup_health()#>>'{table_rows,user_preferences}','1','per-table counts are returned');
-select extensions.ok('todo_status_history' = any(private.workbench_backup_tables_v7()),'restore allow-list includes status history');
 select extensions.ok((public.get_backup_health()->>'estimated_export_bytes')::bigint >= 65536,'export size estimate includes archive overhead');
 select extensions.ok(
   exists(select 1 from pg_catalog.pg_constraint c join pg_catalog.pg_class r on r.oid = c.conrelid

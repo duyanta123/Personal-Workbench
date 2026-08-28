@@ -68,11 +68,13 @@ select extensions.throws_ok(
   )$$,'P0001','ledger splits must equal parent amount','unbalanced split transaction is rejected'
 );
 
+-- 物化窗口按规则时区的"今天"计算（[今-7, 今+30]），日期锚点必须跟随运行日，
+-- 否则写死的历史日期会在窗口滑过后静默落空（曾导致 CI 在 2026-08-22 后必败）。
 insert into public.recurrence_rules(id,user_id,entity_type,frequency,interval_count,weekdays,month_day,start_date,timezone,enabled,generation_mode,template)
-values('16000000-0000-0000-0000-000000000001','11000000-0000-0000-0000-000000000001','todo','daily',1,'{}',null,'2026-08-15','Asia/Shanghai',true,'manual','{"text":"daily","level":"mid"}');
-select public.materialize_recurrences('2026-08-15','Asia/Shanghai');
-select public.materialize_recurrences('2026-08-15','Asia/Shanghai');
-select extensions.is((select pg_catalog.count(*) from public.todos where recurrence_rule_id='16000000-0000-0000-0000-000000000001' and occurrence_date='2026-08-15'),1::bigint,'recurrence materialization is unique across retries');
+values('16000000-0000-0000-0000-000000000001','11000000-0000-0000-0000-000000000001','todo','daily',1,'{}',null,current_date,'Asia/Shanghai',true,'manual','{"text":"daily","level":"mid"}');
+select public.materialize_recurrences(current_date,'Asia/Shanghai');
+select public.materialize_recurrences(current_date,'Asia/Shanghai');
+select extensions.is((select pg_catalog.count(*) from public.todos where recurrence_rule_id='16000000-0000-0000-0000-000000000001' and occurrence_date=current_date),1::bigint,'recurrence materialization is unique across retries');
 
 select extensions.throws_ok(
   $$insert into public.entity_links(user_id,source_kind,source_id,target_kind,target_id) values(
