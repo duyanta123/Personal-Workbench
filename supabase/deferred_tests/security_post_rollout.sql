@@ -62,8 +62,8 @@ select extensions.throws_ok(
 select extensions.throws_ok(
   $$delete from storage.objects
     where bucket_id = 'avatars' and name = '10000000-0000-0000-0000-000000000002/b.webp'$$,
-  'P0001',
-  'Direct deletion from storage tables is not allowed. Use the Storage API instead.',
+  '42501',
+  null,
   'direct storage table deletion is blocked'
 );
 reset role;

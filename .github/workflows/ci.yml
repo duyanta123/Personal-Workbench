@@ -46,8 +46,12 @@ jobs:
           supabase gen types typescript --local --schema public > supabase/generated/database.types.ts
           git diff --exit-code -- supabase/generated/database.types.ts
       - name: Validate deferred rollout migrations and tests
+        # 锁定迁移会撤销核心表的直接写权限，核心套件在 rollout PR 中随迁移一起改写；
+        # 这里仅验证延期迁移可干净应用且延期测试自身通过，因此先移出核心测试。
         run: |
           cp supabase/deferred_migrations/*.sql supabase/migrations/
+          mkdir -p /tmp/core-tests
+          mv supabase/tests/database/*.sql /tmp/core-tests/
           cp supabase/deferred_tests/*.sql supabase/tests/database/
           supabase db reset
           supabase db lint --local --level warning
