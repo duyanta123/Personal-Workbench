@@ -55,7 +55,9 @@ set local role authenticated;
 select pg_catalog.set_config('request.jwt.claim.sub','21000000-0000-0000-0000-000000000001',true);
 select pg_catalog.set_config('request.jwt.claim.role','authenticated',true);
 
--- 三条规则：上海 daily（起点很早，用于游标/跳过累计）、纽约 daily、已结束 daily。
+-- 锁定迁移后 authenticated 不能直写 recurrence_rules/todos；规则种子与"远端已提交"
+-- 的编辑改在服务端（postgres）上下文执行，物化 RPC 断言仍保持 authenticated 上下文。
+reset role;
 insert into public.recurrence_rules(id,user_id,entity_type,frequency,interval_count,weekdays,month_day,start_date,timezone,enabled,generation_mode,template) values
   ('22000000-0000-0000-0000-000000000001','21000000-0000-0000-0000-000000000001','todo','daily',1,'{}',null,'2026-01-01','Asia/Shanghai',true,'manual','{"text":"sh","level":"mid"}'),
   ('22000000-0000-0000-0000-000000000002','21000000-0000-0000-0000-000000000001','todo','daily',1,'{}',null,'2026-01-01','America/New_York',true,'manual','{"text":"ny","level":"mid"}'),
@@ -63,6 +65,9 @@ insert into public.recurrence_rules(id,user_id,entity_type,frequency,interval_co
 -- end_date 必须满足 end_date >= start_date 约束；取 start_date 次日，
 -- 仍远早于物化窗口（now-7），所以不会物化任何实例。
 update public.recurrence_rules set end_date='2026-01-02' where id='22000000-0000-0000-0000-000000000003';
+set local role authenticated;
+
+select public.materialize_recurrences(current_date,'Asia/Shanghai');
 
 select public.materialize_recurrences(current_date,'Asia/Shanghai');
 
@@ -95,9 +100,11 @@ select extensions.is(
   1::bigint,'repeated materialization keeps exactly one instance per occurrence');
 
 -- ---------- 延期：历史记录 + detached + 规则编辑保留 ----------
+reset role;
 update public.todos set occurrence_date = occurrence_date + 1, due_date = due_date + 1
   where recurrence_rule_id='22000000-0000-0000-0000-000000000001'
     and occurrence_date = ((pg_catalog.now() at time zone 'Asia/Shanghai')::date);
+set local role authenticated;
 select extensions.is(
   (select pg_catalog.count(*) from public.todo_status_history h
     join public.todos t on t.id = h.todo_id
@@ -112,8 +119,10 @@ select extensions.ok(
   'postponed instance is marked detached');
 
 -- 规则编辑：未来未完成且未 detached 的实例被重置，延期实例保留。
+reset role;
 update public.recurrence_rules set template = jsonb_set(template,'{text}','"edited"')
   where id='22000000-0000-0000-0000-000000000001';
+set local role authenticated;
 select extensions.is(
   (select pg_catalog.count(*) from public.todos
     where recurrence_rule_id='22000000-0000-0000-0000-000000000001'

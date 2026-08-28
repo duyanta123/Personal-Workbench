@@ -23,10 +23,17 @@ select extensions.throws_ok($$select public.begin_restore(0,7,'{}'::jsonb)$$,'re
 select pg_catalog.set_config('request.jwt.claim.iat',extract(epoch from now())::bigint::text,true);
 select extensions.lives_ok($$select public.begin_restore(0,7,'{}'::jsonb)$$,'recent session can begin restore');
 select extensions.lives_ok($$select public.set_ledger_base_currency_v2('60000000-0000-0000-0000-000000000001',0,'CNY')$$,'empty ledger accepts base currency');
+-- 锁定迁移撤销了 authenticated 对 ledger_entries 的直写，种子条目改在服务端（postgres）上下文建立。
+reset role;
 insert into public.ledger_entries(id,user_id,kind,category,amount,amount_minor,currency_code,entry_date)
 values('61000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000018','expense','test',1,100,'CNY','2026-08-18');
+set local role authenticated;
 select extensions.throws_ok($$select public.set_ledger_base_currency_v2('60000000-0000-0000-0000-000000000002',0,'USD')$$,'ledger base currency is immutable after the first entry','existing ledger currency is immutable');
+-- 币种守卫是触发器校验，须在不被权限拒绝的上下文（postgres）下直插才能命中。
+reset role;
 select extensions.throws_ok($$insert into public.ledger_entries(id,user_id,kind,category,amount,amount_minor,currency_code,entry_date) values('61000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000018','expense','test',1,100,'USD','2026-08-18')$$,'ledger currency must match base currency','entries use base currency');
+select pg_catalog.set_config('request.jwt.claim.sub','10000000-0000-0000-0000-000000000018',true);
+select pg_catalog.set_config('request.jwt.claim.role','authenticated',true);
 reset role;
 
 select extensions.is((select count(*) from private.legacy_rpc_usage_daily where observed_on=current_date),9::bigint,'snapshot records all legacy RPCs');

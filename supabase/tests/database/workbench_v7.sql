@@ -27,12 +27,18 @@ select extensions.is(
 );
 select extensions.is((select pg_catalog.count(*) from public.todos where id='12000000-0000-0000-0000-000000000001'),1::bigint,'duplicate create writes one row');
 
+-- 锁定迁移后客户端不能再直写；"远端已提交"的状态由服务端（postgres）写入模拟，
+-- 命令协议断言仍回到 authenticated 上下文执行。
+reset role;
 update public.todos set pinned=true where id='12000000-0000-0000-0000-000000000001';
+set local role authenticated;
 select extensions.is(
   public.apply_workbench_command_v2('13000000-0000-0000-0000-000000000002','12000000-0000-0000-0000-000000000001',0,'todo.update','{"text":"merged"}'::jsonb,'{"text":"original"}'::jsonb,1)->>'status',
   'applied','different-field remote change auto merges'
 );
+reset role;
 update public.todos set text='remote' where id='12000000-0000-0000-0000-000000000001';
+set local role authenticated;
 select extensions.is(
   public.apply_workbench_command_v2('13000000-0000-0000-0000-000000000003','12000000-0000-0000-0000-000000000001',0,'todo.update','{"text":"local"}'::jsonb,'{"text":"merged"}'::jsonb,3)->>'status',
   'conflict','same-field remote change conflicts'
@@ -70,43 +76,58 @@ select extensions.throws_ok(
 
 -- 物化窗口按规则时区的"今天"计算（[今-7, 今+30]），日期锚点必须跟随运行日，
 -- 否则写死的历史日期会在窗口滑过后静默落空（曾导致 CI 在 2026-08-22 后必败）。
+reset role;
 insert into public.recurrence_rules(id,user_id,entity_type,frequency,interval_count,weekdays,month_day,start_date,timezone,enabled,generation_mode,template)
 values('16000000-0000-0000-0000-000000000001','11000000-0000-0000-0000-000000000001','todo','daily',1,'{}',null,current_date,'Asia/Shanghai',true,'manual','{"text":"daily","level":"mid"}');
+set local role authenticated;
 select public.materialize_recurrences(current_date,'Asia/Shanghai');
 select public.materialize_recurrences(current_date,'Asia/Shanghai');
 select extensions.is((select pg_catalog.count(*) from public.todos where recurrence_rule_id='16000000-0000-0000-0000-000000000001' and occurrence_date=current_date),1::bigint,'recurrence materialization is unique across retries');
 
+-- 触发器业务校验在服务端（postgres）上下文直插才能命中； authenticated 直写已被锁定拒绝。
+reset role;
 select extensions.throws_ok(
   $$insert into public.entity_links(user_id,source_kind,source_id,target_kind,target_id) values(
     '11000000-0000-0000-0000-000000000001','todo','12000000-0000-0000-0000-000000000001','todo','12000000-0000-0000-0000-000000000002'
   )$$,'P0001','linked entity not owned','cross-user entity link is rejected'
 );
+set local role authenticated;
 
+reset role;
 insert into public.ledger_entries(id,user_id,kind,category,amount,amount_minor,currency_code,status,entry_date) values
   ('14000000-0000-0000-0000-000000000002','11000000-0000-0000-0000-000000000001','expense','posted',1,100,'CNY','posted','2026-08-15'),
   ('14000000-0000-0000-0000-000000000003','11000000-0000-0000-0000-000000000001','expense','planned',2,200,'CNY','planned','2026-08-15');
+set local role authenticated;
 select extensions.is((public.get_ledger_summary('2026-08')->>'expense_minor')::bigint,100::bigint,'planned entries are excluded from actual expense');
 
+reset role;
 select extensions.throws_ok(
   $$insert into public.workbench_templates(user_id,kind,name,payload) values(
     '11000000-0000-0000-0000-000000000001','todo','invalid','{"text":"","level":"mid"}'::jsonb
   )$$,'P0001','invalid todo template','template payload ranges are enforced'
 );
+set local role authenticated;
 
+reset role;
 select extensions.throws_ok(
   $$insert into public.saved_views(user_id,entity_kind,name,filters,sort) values(
     '11000000-0000-0000-0000-000000000001','ledger','invalid','{}'::jsonb,'[{"column":"user_id","direction":"asc"}]'::jsonb
   )$$,'P0001','invalid saved view sort','saved-view sort fields are allow-listed'
 );
+set local role authenticated;
 
+reset role;
 insert into public.saved_views(id,user_id,entity_kind,name,filters,sort,is_default) values
   ('17000000-0000-0000-0000-000000000001','11000000-0000-0000-0000-000000000001','todo','first','{"show_done":false}'::jsonb,'[{"column":"sort_order","direction":"asc"}]'::jsonb,true),
   ('17000000-0000-0000-0000-000000000002','11000000-0000-0000-0000-000000000001','todo','second','{"show_done":true}'::jsonb,'[{"column":"created_at","direction":"desc"}]'::jsonb,true);
+set local role authenticated;
 select extensions.is((select pg_catalog.count(*) from public.saved_views where user_id='11000000-0000-0000-0000-000000000001' and entity_kind='todo' and is_default),1::bigint,'only one default view remains');
 select extensions.ok((select is_default from public.saved_views where id='17000000-0000-0000-0000-000000000002'),'new default view replaces the previous default');
 
+reset role;
 insert into public.ledger_entries(id,user_id,kind,category,amount,entry_date) values
   ('14000000-0000-0000-0000-000000000004','11000000-0000-0000-0000-000000000001','expense','legacy',12.34,'2026-08-15');
+set local role authenticated;
 select extensions.is((select amount_minor from public.ledger_entries where id='14000000-0000-0000-0000-000000000004'),1234::bigint,'legacy amount-only writes backfill minor units');
 
 select * from extensions.finish();

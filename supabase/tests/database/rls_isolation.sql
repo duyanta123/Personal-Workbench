@@ -103,7 +103,13 @@ select extensions.is(
   'sync RPC returns current user state'
 );
 
-update public.todos set text = 'tampered' where id = '20000000-0000-0000-0000-000000000002';
+-- 锁定迁移后 authenticated 对 todos 已无 UPDATE 权限，跨用户篡改会被直接拒绝。
+select extensions.throws_ok(
+  $$update public.todos set text = 'tampered' where id = '20000000-0000-0000-0000-000000000002'$$,
+  '42501',
+  null,
+  'user A cannot update rows for user B'
+);
 select extensions.throws_ok(
   $$insert into public.todos (user_id, text) values ('10000000-0000-0000-0000-000000000002', 'cross-user')$$,
   '42501',

@@ -24,6 +24,9 @@ select extensions.ok(
   'recurrence_apply is genuinely unset before a manual edit'
 );
 
+-- 锁定迁移后 authenticated 不能直写；规则与 todo 的种子改在服务端（postgres）上下文
+-- 建立，"recurrence_apply 未设置时手动编辑标记 detached"的触发器语义与角色无关。
+reset role;
 insert into public.recurrence_rules(
   id,user_id,entity_type,frequency,interval_count,weekdays,start_date,timezone,enabled,generation_mode,template
 ) values (
@@ -43,6 +46,7 @@ insert into public.todos(
 update public.todos
 set text='manual edit'
 where id='23000000-0000-0000-0000-000000000003';
+set local role authenticated;
 
 select extensions.ok(
   (select recurrence_detached from public.todos where id='23000000-0000-0000-0000-000000000003'),
