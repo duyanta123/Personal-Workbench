@@ -34,11 +34,12 @@ jobs:
       - run: supabase db start
       - name: Export local Supabase API credentials
         run: supabase status -o env >> "$GITHUB_ENV"
-      - name: Apply core migrations and pgTAP tests
-        run: |
-          supabase db reset
-          supabase db lint --local --level warning
-          supabase test db
+      - name: Apply core migrations
+        run: supabase db reset
+      - name: Lint core database
+        run: supabase db lint --local --level warning
+      - name: Run core pgTAP tests
+        run: supabase test db
       - name: Fail on database type drift
         run: |
           git ls-files --error-unmatch supabase/generated/database.types.ts >/dev/null
