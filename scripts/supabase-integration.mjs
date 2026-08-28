@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict'
 
 const base = process.env.SUPABASE_URL || process.env.API_URL || 'http://127.0.0.1:54321'
-const key = process.env.SUPABASE_ANON_KEY || process.env.ANON_KEY
-// `supabase status -o env` exports SERVICE_ROLE_KEY locally/CI, while hosted
-// deployments commonly use the explicit SUPABASE_SERVICE_ROLE_KEY name.
-// Accept both so the service-role-only legacy evidence assertion cannot be
-// skipped accidentally in the database job.
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SERVICE_ROLE_KEY || ''
+// 新版 supabase CLI 的 `status -o env` 已改用 PUBLISHABLE_KEY/SECRET_KEY 命名，
+// 旧版导出 ANON_KEY/SERVICE_ROLE_KEY；全部兼容以覆盖本地与 CI 的 CLI 版本差。
+const key = process.env.SUPABASE_ANON_KEY || process.env.ANON_KEY || process.env.PUBLISHABLE_KEY
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SERVICE_ROLE_KEY || process.env.SECRET_KEY || ''
 assert.ok(key, 'SUPABASE_ANON_KEY/ANON_KEY is required')
 const password = 'WorkbenchCI!2026'
 
