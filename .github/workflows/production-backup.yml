@@ -1,9 +1,6 @@
 name: Production backup
 
 on:
-  schedule:
-    # 18:30 UTC = 02:30 Asia/Shanghai on the following day.
-    - cron: '30 18 * * *'
   workflow_dispatch:
 
 permissions:

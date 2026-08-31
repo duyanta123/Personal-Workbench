@@ -4,7 +4,7 @@
 
 应用侧备份分为两个兼容层：V8 使用流式 ZIP/NDJSON，默认恢复容量为单表 500,000 行、总计 2,000,000 行；V1-V7 仍按 40 MiB、单表 50,000 行和总计 200,000 行的旧 JSON 限制校验。V8 按模块或按年份的导出只用于查阅，不可直接恢复。移动 Safari 预测全量输出超过 64 MiB 时应改用桌面端，或选择模块/年份范围。
 
-`production-backup.yml` 在每日 18:30 UTC 执行，即北京时间次日 02:30；若迁移到其他调度器，必须保留这个 UTC 时刻并在变更记录中注明时区换算。
+`production-backup.yml` 原定每日 18:30 UTC（北京时间次日 02:30）定时执行；当前定时触发已移除，仅保留手动 `workflow_dispatch`（所需 GitHub Secrets 尚未配置）。若恢复定时调度，必须保留这个 UTC 时刻并在变更记录中注明时区换算。
 
 1. 用 `pg_dump` 导出 `public` 与 `private` 应用数据库 schema，不包含 Supabase Auth/Storage 内部表；脚本通过两个 `--schema` 参数固定这一范围。
 2. 下载 `avatars` bucket 对象，分别用生产 `age` 公钥加密。
